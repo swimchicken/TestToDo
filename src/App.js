@@ -7,16 +7,16 @@ import {
   orderBy,
   onSnapshot,
   addDoc,
-  updateDoc,
-  deleteDoc,
-  doc,
-  serverTimestamp // 新增 serverTimestamp
+  updateDoc, // 導入 updateDoc
+  deleteDoc, // 導入 deleteDoc
+  doc, // 導入 doc 函數來獲取文件引用
+  serverTimestamp
 } from 'firebase/firestore';
 
 function App() {
   const [isNewFeatureEnabled, setIsNewFeatureEnabled] = useState(false);
   const [todos, setTodos] = useState([]);
-  const [newTodoText, setNewTodoText] = useState(''); // 新增輸入框的狀態
+  const [newTodoText, setNewTodoText] = useState('');
 
   useEffect(() => {
     initializeRemoteConfig().then(() => {
@@ -40,31 +40,37 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // 異步函數：新增待辦事項
   const addTodo = async () => {
-    if (newTodoText.trim() === '') return; // 如果輸入框為空，則不做任何操作
+    if (newTodoText.trim() === '') return;
 
     try {
-      // 使用 addDoc 將新的待辦事項添加到 'todos' 集合
       await addDoc(collection(db, 'todos'), {
         text: newTodoText,
         completed: false,
-        createdAt: serverTimestamp() // 使用 Firestore 服務器時間戳
+        createdAt: serverTimestamp()
       });
-      setNewTodoText(''); // 清空輸入框
+      setNewTodoText('');
     } catch (e) {
       console.error("Error adding document: ", e);
     }
   };
 
-  // 異步函數：切換待辦事項完成狀態 (此階段仍為佔位符)
+  // 異步函數：切換待辦事項的完成狀態
   const toggleTodoComplete = async (id, completed) => {
-    console.log("Toggle ToDo function not yet implemented.");
+    // 獲取特定文件的引用
+    const todoRef = doc(db, 'todos', id);
+    // 更新文件的 'completed' 字段
+    await updateDoc(todoRef, {
+      completed: !completed // 將當前狀態反轉
+    });
   };
 
-  // 異步函數：刪除待辦事項 (此階段仍為佔位符)
+  // 異步函數：刪除待辦事項
   const deleteTodo = async (id) => {
-    console.log("Delete ToDo function not yet implemented.");
+    // 獲取特定文件的引用
+    const todoRef = doc(db, 'todos', id);
+    // 刪除文件
+    await deleteDoc(todoRef);
   };
 
   return (
@@ -150,11 +156,33 @@ function App() {
                     >
                       <span style={{ flexGrow: 1, textAlign: 'left', fontSize: '1.1em' }}>{todo.text}</span>
                       <div style={{ display: 'flex', gap: '10px' }}>
-                        <button style={{ padding: '8px 12px', borderRadius: '8px', border: 'none', backgroundColor: '#888', color: 'white', cursor: 'not-allowed' }}>
-                          功能未開
+                        <button
+                            onClick={() => toggleTodoComplete(todo.id, todo.completed)}
+                            style={{
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              border: 'none',
+                              backgroundColor: todo.completed ? '#f0ad4e' : '#5cb85c', // 完成/未完成不同顏色
+                              color: 'white',
+                              cursor: 'pointer',
+                              transition: 'background-color 0.3s ease',
+                            }}
+                        >
+                          {todo.completed ? '標記未完成' : '標記完成'}
                         </button>
-                        <button style={{ padding: '8px 12px', borderRadius: '8px', border: 'none', backgroundColor: '#888', color: 'white', cursor: 'not-allowed' }}>
-                          功能未開
+                        <button
+                            onClick={() => deleteTodo(todo.id)}
+                            style={{
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              border: 'none',
+                              backgroundColor: '#d9534f', // 紅色刪除按鈕
+                              color: 'white',
+                              cursor: 'pointer',
+                              transition: 'background-color 0.3s ease',
+                            }}
+                        >
+                          刪除
                         </button>
                       </div>
                     </li>
