@@ -27,6 +27,7 @@ function App() {
 
     const q = query(collection(db, 'todos'), orderBy('createdAt', 'desc'));
 
+    //test
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const todosData = [];
       querySnapshot.forEach((doc) => {
