@@ -4,7 +4,7 @@ import { getFirestore } from 'firebase/firestore';
 import { getRemoteConfig, fetchAndActivate, getValue } from 'firebase/remote-config';
 import { getAnalytics } from "firebase/analytics";
 
-// 從 Firebase Console 複製過來的配置
+// FirebaseConfig
 const firebaseConfig = {
     apiKey: "AIzaSyD4iXxfM185gexBWPKcLHxqDMyI65uFLNQ",
     authDomain: "my-todo-app-ac3a5.firebaseapp.com",
@@ -15,25 +15,25 @@ const firebaseConfig = {
     measurementId: "G-T9TC8CJ842"
 };
 
-// 初始化 Firebase
+// init Firebase
 const app = initializeApp(firebaseConfig);
 
-// 獲取 Firestore 實例
+// get fireStore
 export const db = getFirestore(app);
 
-// 獲取 Remote Config 實例
+// get RemoteConfig
 const remoteConfig = getRemoteConfig(app);
 
-// 初始化 Analytics (可選，如果你不使用 Analytics 可以移除)
-const analytics = getAnalytics(app);
 
-// 設定開發模式下的最小擷取間隔（生產環境下應更長）
+// const analytics = getAnalytics(app);
+
+// update time
 remoteConfig.settings.minimumFetchIntervalMillis = 0; // 開發時設為 0 毫秒，立即檢查
 remoteConfig.defaultConfig = {
     "new_todo_feature_enabled": false // 本地預設值
 };
 
-// 異步函數來初始化和獲取 Remote Config
+// await to RemoteConfig
 export const initializeRemoteConfig = async () => {
     try {
         await fetchAndActivate(remoteConfig);
@@ -43,7 +43,7 @@ export const initializeRemoteConfig = async () => {
     }
 };
 
-// 獲取 Feature Toggle 值
-export const getFeatureToggle = (key) => { // 移除 : string
+// get value(bool)
+export const getFeatureToggle = (key) => {
     return getValue(remoteConfig, key).asBoolean();
 };

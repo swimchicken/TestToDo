@@ -2,11 +2,14 @@
 import React, { useEffect, useState } from 'react';
 import './App.css';
 import { initializeRemoteConfig, getFeatureToggle, db } from './firebase.js'; // 導入 db
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore'; // 導入 Firestore 相關方法
+import { collection, query, orderBy, onSnapshot,addDoc,serverTimestamp } from 'firebase/firestore'; // 導入 Firestore 相關方法
+
 
 function App() {
   const [isNewFeatureEnabled, setIsNewFeatureEnabled] = useState(false);
   const [todos, setTodos] = useState([]); // 新增 todos 狀態來儲存待辦事項
+  const [newTodoText,setNewTodoText] = useState(''); // 新增輸入框的狀態
+
 
   useEffect(() => {
     // 初始化 Remote Config
