@@ -2,7 +2,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getRemoteConfig, fetchAndActivate, getValue } from 'firebase/remote-config';
-import { getAnalytics } from "firebase/analytics";
+// import { getAnalytics } from "firebase/analytics";
 
 // FirebaseConfig
 const firebaseConfig = {
