@@ -274,7 +274,7 @@ def generate_enhanced_diff_html(code_snippet, file_path):
         }
         return icon_map.get(ext, ('FILE', '#6e7681', '#fff'))
     
-    # 解析diff內容
+    # 改進的diff解析
     def parse_diff_lines(diff_text):
         lines = diff_text.split('\n')
         parsed = []
@@ -282,15 +282,22 @@ def generate_enhanced_diff_html(code_snippet, file_path):
         
         for line in lines:
             line_type = 'context'
+            display_line = line
+            
+            # 識別diff標記
             if line.startswith('@@'):
                 line_type = 'hunk'
-            elif line.startswith('+'):
+            elif line.startswith('+') and not line.startswith('+++'):
                 line_type = 'added'
-            elif line.startswith('-'):
-                line_type = 'removed'
+                display_line = line[1:]  # 移除 + 符號來顯示純程式碼
+            elif line.startswith('-') and not line.startswith('---'):
+                line_type = 'removed'  
+                display_line = line[1:]  # 移除 - 符號來顯示純程式碼
+            elif line.startswith('\\'):
+                line_type = 'meta'  # 元資訊行如 "\ No newline at end of file"
             
             parsed.append({
-                'content': line,
+                'content': display_line,
                 'type': line_type,
                 'number': line_num
             })
@@ -298,23 +305,36 @@ def generate_enhanced_diff_html(code_snippet, file_path):
         
         return parsed
     
-    # 簡單的語法高亮
+    # 改進的語法高亮函數
     def highlight_syntax(code):
         import re
-        # 關鍵字高亮
+        import html
+        
+        # 先轉義HTML特殊字符
+        code = html.escape(code)
+        
+        # 關鍵字高亮 - 更精確的匹配
         keywords = ['import', 'export', 'const', 'let', 'var', 'function', 'class', 
                    'if', 'else', 'for', 'while', 'return', 'async', 'await', 'def', 
-                   'class', 'from', 'import', 'try', 'except', 'finally']
+                   'from', 'try', 'except', 'finally', 'with', 'as', 'in']
+        
+        # 按長度排序，避免短關鍵字被長關鍵字覆蓋
+        keywords.sort(key=len, reverse=True)
         
         for keyword in keywords:
+            # 只匹配完整的詞彙邊界
             pattern = r'\b' + re.escape(keyword) + r'\b'
             code = re.sub(pattern, f'<span style="color: #ff7b72;">{keyword}</span>', code)
         
-        # 字串高亮
-        code = re.sub(r'(["\'])([^"\']*)\1', r'<span style="color: #a5d6ff;">\1\2\1</span>', code)
+        # 字串高亮 - 處理單引號和雙引號
+        code = re.sub(r'(&quot;)([^&quot;]*)(&quot;)', r'<span style="color: #a5d6ff;">\1\2\3</span>', code)
+        code = re.sub(r'(&#x27;)([^&#x27;]*)(&#x27;)', r'<span style="color: #a5d6ff;">\1\2\3</span>', code)
         
         # 註解高亮
         code = re.sub(r'(//.*?$|#.*?$)', r'<span style="color: #8b949e;">\1</span>', code, flags=re.MULTILINE)
+        
+        # 函數名高亮
+        code = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()', r'<span style="color: #d2a8ff;">\1</span>', code)
         
         return code
     
@@ -397,58 +417,85 @@ def post_comment_enhanced(comment_data):
     priority = comment_data.get('priority', 'Medium')
     snippet = comment_data.get('code_snippet', '').strip()
     
-    # 優先級樣式
-    priority_styles = {
-        'High': ('🔴', '#d1242f', '#ffffff'),
-        'Medium': ('🟡', '#bf8700', '#ffffff'), 
-        'Low': ('🟢', '#1a7f37', '#ffffff')
+    # 優先級emoji和樣式
+    priority_info = {
+        'High': ('🔴', '高優先級'),
+        'Medium': ('🟡', '中優先級'), 
+        'Low': ('🟢', '低優先級')
     }
     
-    emoji, bg_color, text_color = priority_styles.get(priority, ('🟡', '#bf8700', '#ffffff'))
+    emoji, priority_text = priority_info.get(priority, ('🟡', '中優先級'))
+    
+    # 檔案類型圖示
+    def get_simple_icon(filepath):
+        ext = filepath.split('.')[-1].lower() if '.' in filepath else 'file'
+        icons = {
+            'js': '🟨 JS', 'jsx': '⚛️ JSX', 'ts': '🔷 TS', 'tsx': '⚛️ TSX',
+            'py': '🐍 PY', 'html': '🌐 HTML', 'css': '🎨 CSS', 
+            'json': '📋 JSON', 'md': '📝 MD', 'txt': '📄 TXT'
+        }
+        return icons.get(ext, '📁 FILE')
+    
+    file_icon = get_simple_icon(file_path)
     
     # 主要內容
     body = f"""## 🤖 AI 程式碼審查建議
 
-<div style="display: inline-block; background: {bg_color}; color: {text_color}; 
-           padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 4px 0;">
-    {emoji} {priority} Priority
-</div>
+### {emoji} {priority_text}
 
-### 📁 檔案路徑
-```
-{file_path}
-```
+#### 📁 檔案: `{file_path}` {file_icon}
 
-### 🔍 變更類型
-**{topic}**
+#### 🔍 變更類型: **{topic}**
 
-### 📝 分析說明
+#### 📝 分析說明
 {description}"""
 
-    # 添加建議區塊（如果有建議）
+    # 添加建議區塊
     if suggestion.strip():
         body += f"""
 
-### 💡 改進建議
+#### 💡 改進建議
 > {suggestion}"""
 
-    # 添加增強型程式碼變更區塊
+    # 處理程式碼片段 - 使用更簡單但更穩定的方式
     if snippet:
-        enhanced_diff = generate_enhanced_diff_html(snippet, file_path)
+        # 統計變更
+        lines = snippet.split('\n')
+        additions = sum(1 for line in lines if line.startswith('+') and not line.startswith('+++'))
+        deletions = sum(1 for line in lines if line.startswith('-') and not line.startswith('---'))
         
         body += f"""
 
-### 📋 程式碼變更詳情
+#### 📊 變更統計
+- ✅ 新增: {additions} 行
+- ❌ 刪除: {deletions} 行
+
+#### 📋 程式碼變更
 
 <details>
-<summary><strong>點擊展開檢視程式碼差異</strong></summary>
+<summary>🔍 <strong>點擊展開檢視程式碼差異</strong></summary>
 
-{enhanced_diff}
+```diff
+{snippet}
+```
+
+**💡 提示**: 
+- 🟢 綠色行 (+) 表示新增的程式碼
+- 🔴 紅色行 (-) 表示刪除的程式碼  
+- ⚫ 白色行表示上下文程式碼
 
 </details>"""
     
-    # 添加底部標識
-    body += "\n\n---\n*🤖 由 AI 程式碼審查助手自動生成 | 點擊上方 Details 展開檢視*"
+    # 添加互動提示
+    body += f"""
+
+---
+#### 🛠️ 進階檢視選項
+- **GitHub Web IDE**: 按 `.` 鍵開啟線上編輯器檢視完整檔案
+- **本地檢視**: `git checkout {PR_NUMBER}` 切換到這個PR分支
+- **線上工具**: 複製程式碼到 [diffchecker.com](https://www.diffchecker.com) 進行對比
+
+*🤖 由 AI 程式碼審查助手自動生成*"""
 
     # 發送請求
     url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
@@ -458,9 +505,11 @@ def post_comment_enhanced(comment_data):
     try:
         response.raise_for_status()
         print(f"✅ 成功發佈增強版留言: {topic} @ {file_path}")
+        return True
     except requests.exceptions.HTTPError as e:
         print(f"❌ 發佈留言失敗: {e.response.status_code}")
         print(f"錯誤詳情: {e.response.text}")
+        return False
 
 # 保留原本的 post_comment 函數供備用
 def post_comment(comment_data):
