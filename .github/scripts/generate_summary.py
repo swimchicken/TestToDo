@@ -32,14 +32,12 @@ def get_pr_diff():
     return response.text[:30000]
 
 def analyze_diff_with_gemini(diff_text):
-    """使用 Gemini API 分析 diff，並安全地組合 prompt"""
+    """使用 Gemini API 分析 diff，並安全地組合 prompt (維持不變)"""
     if not diff_text.strip():
         return [{"file_path": "N/A", "topic": "無變更", "description": "這個 PR 不包含程式碼變更，或變更過大無法分析。", "code_snippet": ""}]
 
     model = genai.GenerativeModel(GEMINI_MODEL)
     
-    # *** 變更點 1: 使用純文字模板，避免 f-string 語法錯誤 ***
-    # 這是一個純文字模板，可以安全地包含任何特殊字元
     prompt_template = """
     您是一位頂尖的 GitHub 程式碼審查機器人。請仔細分析下方的 Pull Request diff 內容。
     您的任務是：
@@ -69,7 +67,6 @@ def analyze_diff_with_gemini(diff_text):
     ```
     """
     
-    # *** 變更點 2: 使用安全的 .replace() 方法來填入 diff 內容 ***
     prompt = prompt_template.replace("__DIFF_PLACEHOLDER__", diff_text)
     
     try:
@@ -86,8 +83,10 @@ def analyze_diff_with_gemini(diff_text):
 
 
 def post_comment(comment_data):
-    """將包含程式碼片段的結構化資料，格式化為指定的 Markdown 格式後再發佈"""
-    # *** 變更點 3: 重新加回顯示程式碼片段的邏輯 ***
+    """
+    (*** 主要變更點 ***)
+    使用 <details> 和 <summary> HTML 標籤來建立可收合的程式碼區塊。
+    """
     # 1. 先建立留言的主要部分
     body = f"""🤖 **AI 分析要點**
 
@@ -96,49 +95,14 @@ def post_comment(comment_data):
 **詳細說明:**
 {comment_data.get('description', '無說明')}"""
 
-    # 2. 如果有程式碼片段，再將其附加到主要留言後面
+    # 2. 如果有程式碼片段，建立一個可收合的區塊並附加到主要留言後面
     snippet = comment_data.get('code_snippet', '').strip()
     if snippet:
+        # *** 變更點: 使用 <details> 和 <summary> 標籤 ***
         code_block = f"""
 
-**相關程式碼變更:**
+<details>
+<summary>點此展開/收合相關程式碼</summary>
+
 ```diff
 {snippet}
-```"""
-        body += code_block
-
-    # 3. 發佈組合好的完整留言
-    url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
-    payload = {'body': body}
-    response = requests.post(url, json=payload, headers=GITHUB_HEADERS)
-    try:
-        response.raise_for_status()
-        print(f"成功發佈留言: {comment_data.get('topic', 'N/A')} @ {comment_data.get('file_path', 'N/A')}")
-    except requests.exceptions.HTTPError as e:
-        print(f"發佈留言失敗: {e.response.status_code} {e.response.text}")
-
-if __name__ == "__main__":
-    # 主執行流程維持不變
-    try:
-        print("1. 正在取得 PR 的 diff 內容...")
-        diff = get_pr_diff()
-        
-        print("2. 正在呼叫 Gemini API 進行深度分析...")
-        analysis_points = analyze_diff_with_gemini(diff)
-        
-        if not analysis_points:
-            print("AI 未回傳任何分析要點。")
-        else:
-            print(f"3. 分析完成，取得 {len(analysis_points)} 個要點。準備逐一發佈...")
-            for point in analysis_points:
-                post_comment(point)
-        
-        print("✅ 所有分析要點已成功發佈！")
-    except Exception as e:
-        print(f"❌ 發生未知錯誤： {e}")
-        post_comment({
-            "file_path": "Bot Execution Error",
-            "topic": "機器人執行失敗",
-            "description": f"Bot 在執行過程中發生嚴重錯誤，無法完成分析：\n`{str(e)}`",
-            "code_snippet": ""
-        })
