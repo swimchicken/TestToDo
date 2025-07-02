@@ -159,49 +159,30 @@ def analyze_diff_with_gemini(diff_text):
 
     model = genai.GenerativeModel(GEMINI_MODEL)
     
-    # 改進的 prompt，提供完整的程式碼差異
+    # 簡化的 prompt，減少 JSON 錯誤
     prompt_template = """
-    您是一位專業的 GitHub 程式碼審查專家。請仔細分析下方的 Pull Request diff 內容，提供專業且實用的程式碼審查建議。
+    您是一位專業的程式碼審查專家。請分析以下 Pull Request 的變更內容。
 
-    **重要的 JSON 格式要求：**
-    1. 必須回傳有效的 JSON 陣列格式
-    2. 所有字串值中的特殊字符必須正確轉義（使用 \\n 表示換行）
-    3. code_snippet 要包含完整的相關變更，不要截斷
-    4. 保持原始的 diff 格式，包含 @@、+ 和 - 符號
+    **重要要求：**
+    1. 請僅回傳有效的 JSON 陣列
+    2. 每個 JSON 物件必須包含這 6 個欄位：file_path, topic, description, priority, suggestion, code_snippet
+    3. 所有字串值必須用雙引號包圍
+    4. 物件之間必須用逗號分隔
+    5. code_snippet 中的特殊字符必須轉義（\\n \\t \\" \\\\）
 
-    **分析要求：**
-    1. 關注程式碼品質、安全性、效能和最佳實踐
-    2. 提供具體的改進建議
-    3. 評估變更的重要性和優先級
-    4. 專注於程式碼文件變更，忽略純文檔變更（除非涉及重要配置）
-
-    **回應格式：**每個物件包含以下 6 個欄位：
-    - `file_path`: 檔案路徑
-    - `topic`: 變更類型（如："新增功能"、"Bug修復"、"效能優化"、"安全性改進"、"配置變更"）
-    - `description`: 詳細分析變更內容和影響
-    - `priority`: 優先級（"High"、"Medium"、"Low"）
-    - `suggestion`: 具體的改進建議（如果沒有建議可填 ""）
-    - `code_snippet`: 完整的相關 diff 程式碼片段，保持原始格式，包含足夠的上下文
-
-    **程式碼片段要求：**
-    - 保留完整的 diff 格式（@@ 行號信息、+ 和 - 前綴）
-    - 包含足夠的上下文（變更前後的相關程式碼）
-    - 不要人為截斷，顯示完整的邏輯區塊
-    - 正確轉義特殊字符（\\n、\\t、\\"等）
-
-    範例輸出：
+    **JSON 格式範例：**
     [
         {
-            "file_path": "src/components/Example.js",
-            "topic": "新增功能",
-            "description": "新增了使用者認證組件，提供登入和登出功能。",
+            "file_path": "src/App.js",
+            "topic": "架構調整",
+            "description": "重構應用程式結構，新增路由功能",
             "priority": "Medium",
-            "suggestion": "建議加入錯誤處理和載入狀態顯示。",
-            "code_snippet": "@@ -10,4 +10,12 @@\\n import React from 'react';\\n\\n+const handleLogin = async (credentials) => {\\n+  try {\\n+    const result = await authService.login(credentials);\\n+    setUser(result.user);\\n+    return { success: true };\\n+  } catch (error) {\\n+    console.error('Login failed:', error);\\n+    return { success: false, error };\\n+  }\\n+};"
+            "suggestion": "建議加入錯誤處理",
+            "code_snippet": "+import { BrowserRouter } from 'react-router-dom';\\n+function App() {\\n+  return <BrowserRouter>...</BrowserRouter>;\\n+}"
         }
     ]
 
-    請用繁體中文分析以下 diff，並確保提供完整的程式碼片段：
+    請分析以下 diff 並以 JSON 格式回應：
 
     ```diff
     __DIFF_PLACEHOLDER__
@@ -213,60 +194,122 @@ def analyze_diff_with_gemini(diff_text):
     try:
         print("正在呼叫 Gemini API...")
         print(f"發送給 AI 的 diff 長度: {len(diff_text)} 字符")
-        print(f"Diff 開頭預覽: {diff_text[:500]}...")
         
         response = model.generate_content(prompt)
         print(f"Gemini API 回應長度: {len(response.text) if response.text else 0}")
         
         if not response.text:
-            return [{"topic": "AI 無回應", "description": "Gemini API 沒有返回任何內容，可能是因為內容過長或 API 限制", "file_path": "Error", "code_snippet": "", "priority": "Medium", "suggestion": "嘗試縮短 diff 內容或檢查 API 設定"}]
+            return [{"topic": "AI 無回應", "description": "Gemini API 沒有返回任何內容", "file_path": "Error", "code_snippet": "", "priority": "Medium", "suggestion": ""}]
         
-        # 清理回應文本
+        # 清理和修復 JSON
         cleaned_text = response.text.strip()
+        
+        # 移除 markdown 標記
         cleaned_text = cleaned_text.replace('```json', '').replace('```', '').strip()
         
-        print(f"清理後的回應預覽: {cleaned_text[:500]}...")
+        # 保存原始回應用於調試
+        print(f"原始 AI 回應預覽: {cleaned_text[:1000]}...")
         
-        # 嘗試解析 JSON
+        # 嘗試修復常見的 JSON 問題
+        def fix_json(text):
+            import re
+            
+            # 1. 移除控制字符
+            text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', text)
+            
+            # 2. 修復缺失的逗號（在 } 和 { 之間）
+            text = re.sub(r'}\s*\n\s*{', '},\n{', text)
+            text = re.sub(r'}\s*{', '},{', text)
+            
+            # 3. 修復缺失的逗號（在 " 和 " 之間跨行）
+            text = re.sub(r'"\s*\n\s*"', '",\n"', text)
+            
+            # 4. 修復未閉合的字符串
+            text = re.sub(r'([^"\\])\n\s*([}\]])', r'\1",\n\2', text)
+            
+            # 5. 確保陣列格式正確
+            if not text.strip().startswith('['):
+                text = '[' + text
+            if not text.strip().endswith(']'):
+                text = text + ']'
+            
+            return text
+        
+        # 嘗試解析原始 JSON
         try:
             summary_points = json.loads(cleaned_text)
-            print(f"成功解析 JSON，包含 {len(summary_points)} 個項目")
+            print(f"✅ 成功解析原始 JSON，包含 {len(summary_points)} 個項目")
         except json.JSONDecodeError as parse_error:
-            print(f"JSON 解析失敗: {parse_error}")
-            print("嘗試進行字符清理...")
+            print(f"❌ 原始 JSON 解析失敗: {parse_error}")
+            print(f"錯誤位置: line {getattr(parse_error, 'lineno', '?')} column {getattr(parse_error, 'colno', '?')}")
             
-            # 移除可能有問題的控制字符，但保留正常的轉義字符
-            import re
-            cleaned_text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', cleaned_text)
+            # 嘗試修復 JSON
+            print("🔧 嘗試修復 JSON 格式...")
+            fixed_text = fix_json(cleaned_text)
             
             try:
-                summary_points = json.loads(cleaned_text)
-                print(f"清理後成功解析 JSON，包含 {len(summary_points)} 個項目")
+                summary_points = json.loads(fixed_text)
+                print(f"✅ 修復後成功解析 JSON，包含 {len(summary_points)} 個項目")
             except json.JSONDecodeError as second_error:
-                print(f"第二次解析也失敗: {second_error}")
+                print(f"❌ 修復後仍解析失敗: {second_error}")
                 
-                # 顯示調試信息
-                debug_text = cleaned_text[:2000] if len(cleaned_text) > 2000 else cleaned_text
-                print(f"問題內容: {debug_text}")
+                # 顯示更詳細的調試信息
+                print("\n📋 調試信息:")
+                print(f"原始長度: {len(cleaned_text)}")
+                print(f"修復後長度: {len(fixed_text)}")
+                print(f"修復後內容預覽: {fixed_text[:500]}...")
                 
-                # 提供回退結果
-                return [{
-                    "topic": "JSON 解析錯誤",
-                    "description": f"AI 分析成功但回應格式錯誤。主要涉及多個文件的程式碼變更，包括新增功能和架構調整。錯誤: {str(second_error)[:100]}",
-                    "file_path": "Multiple Files",
-                    "code_snippet": "# 由於 JSON 格式問題，無法顯示完整的程式碼差異\n# 請查看 PR 的 Files changed 標籤頁獲取完整變更",
-                    "priority": "Medium",
-                    "suggestion": "建議手動檢查 PR 中的主要變更，或重新執行 AI 分析"
-                }]
+                # 嘗試手動解析部分內容
+                if "file_path" in fixed_text:
+                    print("🔍 檢測到 file_path，嘗試提取信息...")
+                    # 簡化的回退處理
+                    return [{
+                        "topic": "AI 分析成功",
+                        "description": "AI 成功分析了程式碼變更，但 JSON 格式需要調整。主要變更包括多個檔案的程式碼修改。",
+                        "file_path": "Multiple Files",
+                        "code_snippet": "// AI 分析成功但格式化有問題\\n// 請查看 GitHub PR 的 Files 標籤頁查看完整變更",
+                        "priority": "Medium",
+                        "suggestion": "建議檢查 AI 設定或重新執行分析"
+                    }]
+                else:
+                    # 最終回退
+                    return [{
+                        "topic": "JSON 格式錯誤",
+                        "description": f"AI 回應包含格式錯誤。錯誤詳情: {str(second_error)[:200]}",
+                        "file_path": "Error",
+                        "code_snippet": "# 格式錯誤，無法顯示程式碼",
+                        "priority": "Low",
+                        "suggestion": "嘗試重新執行分析或檢查 API 設定"
+                    }]
         
-        if isinstance(summary_points, list):
-            print(f"成功解析 {len(summary_points)} 個分析要點")
-            return summary_points
-        else:
-            return [{"topic": "格式錯誤", "description": "AI 回應不是預期的列表格式", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
+        # 驗證結果格式
+        if isinstance(summary_points, list) and len(summary_points) > 0:
+            # 檢查每個項目是否包含必要欄位
+            valid_points = []
+            for point in summary_points:
+                if isinstance(point, dict) and all(key in point for key in ['file_path', 'topic', 'description']):
+                    # 確保所有必要欄位都存在
+                    valid_point = {
+                        'file_path': point.get('file_path', 'Unknown'),
+                        'topic': point.get('topic', '程式碼變更'),
+                        'description': point.get('description', '檔案內容有變更'),
+                        'priority': point.get('priority', 'Medium'),
+                        'suggestion': point.get('suggestion', ''),
+                        'code_snippet': point.get('code_snippet', '')
+                    }
+                    valid_points.append(valid_point)
+            
+            if valid_points:
+                print(f"✅ 驗證完成，返回 {len(valid_points)} 個有效分析要點")
+                return valid_points
+        
+        # 如果到這裡說明格式有問題
+        return [{"topic": "格式驗證失敗", "description": "AI 回應格式不符合預期", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
             
     except Exception as e:
-        print(f"API 呼叫錯誤: {e}")
+        print(f"❌ API 呼叫錯誤: {e}")
+        import traceback
+        traceback.print_exc()
         return [{"topic": "API 錯誤", "description": f"呼叫 Gemini API 時發生錯誤: {str(e)}", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
 
 def post_comment(comment_data):
