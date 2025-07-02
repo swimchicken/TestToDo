@@ -12,14 +12,13 @@ import {
   doc, // 導入 doc 函數來獲取文件引用
   serverTimestamp
 } from 'firebase/firestore';
-import DiffAnalyzer from './components/DiffAnalyzer';
-import PRVisualizer from './components/PRVisualizer';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import AIGuiPage from './pages/AIGuiPage';
 
 function App() {
   const [isNewFeatureEnabled, setIsNewFeatureEnabled] = useState(false);
   const [todos, setTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
-  const [currentView, setCurrentView] = useState('todo'); // 'todo', 'diff', 或 'pr'
 
   useEffect(() => {
     initializeRemoteConfig().then(() => {
@@ -197,69 +196,12 @@ function App() {
   );
 
   return (
-    <div>
-      {/* 導航欄 */}
-      <nav style={{
-        backgroundColor: '#333',
-        padding: '15px 20px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        color: 'white',
-        fontFamily: 'Inter, sans-serif'
-      }}>
-        <h1 style={{ margin: 0, fontSize: '24px' }}>🤖 AI 助手專案</h1>
-        <div style={{ display: 'flex', gap: '15px' }}>
-          <button
-            onClick={() => setCurrentView('todo')}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: currentView === 'todo' ? '#61dafb' : '#555',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '16px'
-            }}
-          >
-            📝 Todo 列表
-          </button>
-          <button
-            onClick={() => setCurrentView('diff')}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: currentView === 'diff' ? '#61dafb' : '#555',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '16px'
-            }}
-          >
-            🔍 Diff 分析器
-          </button>
-          <button
-            onClick={() => setCurrentView('pr')}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: currentView === 'pr' ? '#61dafb' : '#555',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '16px'
-            }}
-          >
-            📋 PR 視覺化
-          </button>
-        </div>
-      </nav>
-
-      {/* 主要內容區域 */}
-      {currentView === 'todo' ? <TodoView /> : 
-       currentView === 'diff' ? <DiffAnalyzer /> : 
-       <PRVisualizer />}
-    </div>
+    <Router>
+      <Routes>
+        <Route path="/ai-gui" element={<AIGuiPage />} />
+        <Route path="/*" element={<TodoView />} />
+      </Routes>
+    </Router>
   );
 }
 
