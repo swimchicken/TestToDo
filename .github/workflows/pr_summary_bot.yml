@@ -1,35 +1,34 @@
-name: 'Pull Request Summary Bot'
+name: 'AI Pull Request Analyst Bot'
 
 on:
   pull_request:
-    types: [opened, synchronize] # 當 PR 被開啟或更新時觸發
+    types: [opened, synchronize]
 
 permissions:
-  pull-requests: write # 給予 workflow 寫入 PR 留言的權限
+  pull-requests: write
 
 jobs:
-  summarize_changes:
+  analyze_pr:
     runs-on: ubuntu-latest
     steps:
-      # 步驟 1: 取得 repo 的程式碼，這樣我們才能執行自己的腳本
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 步驟 2: 設定 Python 環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
       
-      # 步驟 3: 安裝 Python 的 requests 函式庫，用來發送 API 請求
+      # 更新：安裝 requests 和 google-generativeai
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests google-generativeai
 
-      # 步驟 4: 執行我們的 Python 腳本來產生並發佈摘要
-      # 我們會將 GitHub 的一些資訊透過環境變數傳給腳本
-      - name: Run summary script
+      # 更新：傳入 GEMINI_API_KEY 和模型名稱
+      - name: Run AI analysis script
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 用於 API 認證的 token
-          GITHUB_REPOSITORY: ${{ github.repository }} # repo 名稱，例如 "my-user/my-repo"
-          PR_NUMBER: ${{ github.event.pull_request.number }} # PR 的編號
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }} # 從 Secrets 讀取金鑰
+          GEMINI_MODEL: 'gemini-1.5-flash-latest' # 使用一個通用的高效模型
         run: python .github/scripts/generate_summary.py
