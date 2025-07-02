@@ -8,7 +8,7 @@ GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPO = os.environ['GITHUB_REPOSITORY']
 PR_NUMBER = os.environ['PR_NUMBER']
 GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
-GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite-preview-06-17')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-1.5-flash-latest')
 
 # --- API 設定 (維持不變) ---
 GITHUB_API_URL = "https://api.github.com"
