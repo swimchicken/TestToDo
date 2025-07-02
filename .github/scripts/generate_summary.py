@@ -3,14 +3,14 @@ import requests
 import json
 import google.generativeai as genai
 
-# --- 環境變數讀取 (維持不變) ---
+# --- 環境變數讀取 ---
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPO = os.environ['GITHUB_REPOSITORY']
 PR_NUMBER = os.environ['PR_NUMBER']
 GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
 GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite-preview-06-17')
 
-# --- API 設定 (維持不變) ---
+# --- API 設定 ---
 GITHUB_API_URL = "https://api.github.com"
 GITHUB_HEADERS = {
     'Authorization': f'token {GITHUB_TOKEN}',
@@ -21,18 +21,18 @@ DIFF_HEADERS = {
     'Accept': 'application/vnd.github.v3.diff'
 }
 
-# 設定 Gemini API 金鑰 (維持不變)
+# 設定 Gemini API 金鑰
 genai.configure(api_key=GEMINI_API_KEY)
 
 def get_pr_diff():
-    """取得 Pull Request 的 diff 內容 (維持不變)"""
+    """取得 Pull Request 的 diff 內容"""
     url = f"{GITHUB_API_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
     response = requests.get(url, headers=DIFF_HEADERS)
     response.raise_for_status()
     return response.text[:30000]
 
 def analyze_diff_with_gemini(diff_text):
-    """使用 Gemini API 分析 diff，並安全地組合 prompt (維持不變)"""
+    """使用 Gemini API 分析 diff，並安全地組合 prompt"""
     if not diff_text.strip():
         return [{"file_path": "N/A", "topic": "無變更", "description": "這個 PR 不包含程式碼變更，或變更過大無法分析。", "code_snippet": ""}]
 
@@ -83,10 +83,7 @@ def analyze_diff_with_gemini(diff_text):
 
 
 def post_comment(comment_data):
-    """
-    (*** 主要變更點 ***)
-    使用 <details> 和 <summary> HTML 標籤來建立可收合的程式碼區塊。
-    """
+    """將包含程式碼片段的結構化資料，格式化為指定的 Markdown 格式後再發佈"""
     # 1. 先建立留言的主要部分
     body = f"""🤖 **AI 分析要點**
 
@@ -98,7 +95,6 @@ def post_comment(comment_data):
     # 2. 如果有程式碼片段，建立一個可收合的區塊並附加到主要留言後面
     snippet = comment_data.get('code_snippet', '').strip()
     if snippet:
-        # *** 變更點: 使用 <details> 和 <summary> 標籤 ***
         code_block = f"""
 
 <details>
