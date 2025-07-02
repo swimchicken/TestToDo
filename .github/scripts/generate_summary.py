@@ -1,121 +1,107 @@
 import os
 import requests
-import re
+import json
+import google.generativeai as genai
 
-# 從環境變數讀取 GitHub Actions 傳來的資訊
-TOKEN = os.environ['GITHUB_TOKEN']
+# --- 環境變數讀取 ---
+GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPO = os.environ['GITHUB_REPOSITORY']
 PR_NUMBER = os.environ['PR_NUMBER']
+GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-1.5-flash-latest')
 
-# GitHub API 的通用設定
-BASE_URL = "https://api.github.com"
-HEADERS = {
-    'Authorization': f'token {TOKEN}',
+# --- API 設定 ---
+GITHUB_API_URL = "https://api.github.com"
+GITHUB_HEADERS = {
+    'Authorization': f'token {GITHUB_TOKEN}',
     'Accept': 'application/vnd.github.v3+json'
 }
-# 取得 diff 內容需要特殊的 Accept header
 DIFF_HEADERS = {
-    'Authorization': f'token {TOKEN}',
+    'Authorization': f'token {GITHUB_TOKEN}',
     'Accept': 'application/vnd.github.v3.diff'
 }
 
+# 設定 Gemini API 金鑰
+genai.configure(api_key=GEMINI_API_KEY)
+
 def get_pr_diff():
     """取得 Pull Request 的 diff 內容"""
-    url = f"{BASE_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
+    url = f"{GITHUB_API_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
     response = requests.get(url, headers=DIFF_HEADERS)
     response.raise_for_status()
-    return response.text
+    # 限制 diff 長度，避免超出模型限制或費用過高
+    return response.text[:25000]
 
-def parse_diff(diff_text):
-    """解析 diff 內容，轉換成我們想要的格式"""
-    files_changed = {}
-    # 按檔案分割 diff
-    file_diffs = diff_text.split('diff --git ')
+def analyze_diff_with_gemini(diff_text):
+    """使用 Gemini API 分析 diff 並回傳要點列表"""
+    if not diff_text.strip():
+        return ["這個 PR 不包含程式碼變更，或變更過大無法分析。"]
+
+    model = genai.GenerativeModel(GEMINI_MODEL)
     
-    for file_diff in file_diffs[1:]:
-        lines = file_diff.split('\n')
-        # 取得檔案路徑
-        match = re.search(r'a/(.+) b/(.+)', lines[0])
-        if not match:
-            continue
-        file_path = match.group(2)
-        
-        # 尋找變更的區塊 (hunks)
-        hunks = re.finditer(r'@@ -(\d+,\d+) \+(\d+,\d+) @@', file_diff)
-        changes = []
-        
-        content_lines = lines[1:]
-        added_lines = {i: line[1:].strip() for i, line in enumerate(content_lines) if line.startswith('+') and not line.startswith('+++')}
-        removed_lines = {i: line[1:].strip() for i, line in enumerate(content_lines) if line.startswith('-') and not line.startswith('---')}
-        
-        # 簡易配對邏輯：將相鄰的新增和刪除行視為一對變更
-        # 這是一個簡化的實現，對於複雜的變更可能不完美
-        removed_keys = list(removed_lines.keys())
-        added_keys = list(added_lines.keys())
+    # 設計給 AI 的指令 (Prompt)
+    prompt = f"""
+    您是一位資深的 GitHub 程式碼審查專家。請分析以下 Pull Request 的 diff 內容。
+    您的任務是：
+    1. 深入理解程式碼的變更。
+    2. 總結出幾個最重要的、各自獨立的變更要點（例如：功能新增、Bug 修復、程式碼重構、依賴更新等）。
+    3. 每一個要點都必須是完整的句子，並使用 Markdown 格式（例如，用 **粗體** 強調關鍵字）。
+    4. **非常重要**：請將您的所有回答格式化為一個 JSON 陣列 (array of strings)，陣列中的每個字串就是一個獨立的變更要點。不要在 JSON 陣列之外包含任何說明文字。
 
-        # 為了避免 Markdown 表格語法錯誤，替換管道符號
-        def escape_md(text):
-            return text.replace('|', '\|')
+    範例輸出格式：
+    ["- **功能新增**: 新增了使用者登出按鈕到導覽列。","- **Bug 修復**: 修正了在個人資料頁面，使用者名稱顯示不正確的問題。"]
 
-        for i, key in enumerate(removed_keys):
-            before = escape_md(removed_lines[key])
-            after = escape_md(added_lines[added_keys[i]]) if i < len(added_keys) else ""
-            changes.append({'before': before, 'after': after})
+    請用「繁體中文」進行分析與回答。
 
-        if not removed_keys and added_keys: # 處理純新增的情況
-            for key in added_keys:
-                changes.append({'before': "", 'after': escape_md(added_lines[key])})
+    這是需要分析的 diff 內容：
+    ```diff
+    {diff_text}
+    ```
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        # 清理 AI 可能返回的 markdown code block 標籤
+        cleaned_text = response.text.strip().replace('```json', '').replace('```', '').strip()
+        # 解析 JSON
+        summary_points = json.loads(cleaned_text)
+        if isinstance(summary_points, list):
+            return summary_points
+        else:
+            return ["AI 回應格式錯誤，無法解析為要點列表。"]
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"無法解析 AI 回應或 API 出錯: {e}")
+        return [f"AI 分析時發生錯誤，無法產生摘要。\n原始回應:\n{response.text}"]
 
-        if changes:
-            files_changed[file_path] = changes
-            
-    return files_changed
-
-def generate_markdown(files_changed):
-    """產生 Markdown 表格"""
-    if not files_changed:
-        return "此 Pull Request 沒有檢測到可摘要的程式碼變更。"
-
-    md_comment = "### ✨ Pull Request 變更總結\n\n"
-    md_comment += "這是一個自動產生的摘要，將變更以表格呈現，方便審查。\n\n"
-
-    for file_path, changes in files_changed.items():
-        md_comment += f"#### 檔案：`{file_path}`\n"
-        md_comment += "| 變更前 (—) | 變更後 (+) |\n"
-        md_comment += "|:---|:---|\n"
-        for change in changes:
-            md_comment += f"| `{change['before']}` | `{change['after']}` |\n"
-        md_comment += "\n"
-        
-    # GitHub 留言有字數限制，這裡做個簡單的截斷
-    if len(md_comment) > 65000:
-        md_comment = md_comment[:65000] + "\n\n...(內容過長，已被截斷)..."
-        
-    return md_comment
 
 def post_comment(comment_body):
-    """將產生的 Markdown 作為留言發佈到 PR"""
-    url = f"{BASE_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
+    """將單一留言發佈到 PR"""
+    url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
     payload = {'body': comment_body}
-    response = requests.post(url, json=payload, headers=HEADERS)
-    response.raise_for_status()
+    response = requests.post(url, json=payload, headers=GITHUB_HEADERS)
+    try:
+        response.raise_for_status()
+        print(f"成功發佈留言: {comment_body[:50]}...")
+    except requests.exceptions.HTTPError as e:
+        print(f"發佈留言失敗: {e.response.status_code} {e.response.text}")
 
 if __name__ == "__main__":
     try:
         print("1. 正在取得 PR 的 diff 內容...")
         diff = get_pr_diff()
         
-        print("2. 正在解析 diff 並建立摘要...")
-        changed_files = parse_diff(diff)
+        print("2. 正在呼叫 Gemini API 進行分析...")
+        analysis_points = analyze_diff_with_gemini(diff)
         
-        print("3. 正在產生 Markdown 格式的留言...")
-        markdown_output = generate_markdown(changed_files)
+        if not analysis_points:
+            print("AI 未回傳任何分析要點。")
+        else:
+            print(f"3. 分析完成，取得 {len(analysis_points)} 個要點。準備逐一發佈...")
+            # 將每個要點作為獨立留言發佈
+            for point in analysis_points:
+                post_comment(f"🤖 **AI 分析要點**\n\n{point}")
         
-        print("4. 正在將摘要發佈到 Pull Request...")
-        post_comment(markdown_output)
-        
-        print("✅ 成功！摘要已發佈。")
-    except requests.exceptions.HTTPError as e:
-        print(f"❌ 發生錯誤： {e.response.status_code} {e.response.text}")
+        print("✅ 所有分析要點已成功發佈！")
     except Exception as e:
         print(f"❌ 發生未知錯誤： {e}")
+        post_comment(f"🤖 Bot 執行時發生嚴重錯誤，無法完成分析：\n`{str(e)}`")
