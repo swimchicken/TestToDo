@@ -3,14 +3,14 @@ import requests
 import json
 import google.generativeai as genai
 
-# --- 環境變數讀取 (維持不變) ---
+# --- 環境變數讀取 ---
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPO = os.environ['GITHUB_REPOSITORY']
 PR_NUMBER = os.environ['PR_NUMBER']
 GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
 GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite-preview-06-17')
 
-# --- API 設定 (維持不變) ---
+# --- API 設定 ---
 GITHUB_API_URL = "https://api.github.com"
 GITHUB_HEADERS = {
     'Authorization': f'token {GITHUB_TOKEN}',
@@ -21,15 +21,14 @@ DIFF_HEADERS = {
     'Accept': 'application/vnd.github.v3.diff'
 }
 
-# 設定 Gemini API 金鑰 (維持不變)
+# 設定 Gemini API 金鑰
 genai.configure(api_key=GEMINI_API_KEY)
 
 def get_pr_diff():
-    """取得 Pull Request 的 diff 內容 (維持不變)"""
+    """取得 Pull Request 的 diff 內容"""
     url = f"{GITHUB_API_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
     response = requests.get(url, headers=DIFF_HEADERS)
     response.raise_for_status()
-    # 限制 diff 長度，避免超出模型限制或費用過高
     return response.text[:30000]
 
 def analyze_diff_with_gemini(diff_text):
@@ -39,7 +38,7 @@ def analyze_diff_with_gemini(diff_text):
 
     model = genai.GenerativeModel(GEMINI_MODEL)
     
-    # *** 變更點: 將 f""" 改為 fr""" 來解決反斜線的語法錯誤 ***
+    # 唯一修正點：使用 fr""" 避免反斜線語法錯誤
     prompt = fr"""
     您是一位頂尖的 GitHub 程式碼審查機器人。請仔細分析下方的 Pull Request diff 內容。
     您的任務是：
@@ -83,8 +82,7 @@ def analyze_diff_with_gemini(diff_text):
 
 
 def post_comment(comment_data):
-    """將結構化的資料格式化為指定的 Markdown 格式後再發佈 (維持不變)"""
-    # 先建立留言的主要部分
+    """將結構化的資料格式化為指定的 Markdown 格式後再發佈"""
     body = f"""🤖 **AI 分析要點**
 
 **檔案路徑:** `{comment_data.get('file_path', 'N/A')}`
@@ -92,7 +90,6 @@ def post_comment(comment_data):
 **詳細說明:**
 {comment_data.get('description', '無說明')}"""
 
-    # 如果有程式碼片段，再將其附加到主要留言後面
     snippet = comment_data.get('code_snippet', '').strip()
     if snippet:
         code_block = f"""
@@ -103,7 +100,6 @@ def post_comment(comment_data):
 ```"""
         body += code_block
 
-    # 發佈組合好的完整留言
     url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
     payload = {'body': body}
     response = requests.post(url, json=payload, headers=GITHUB_HEADERS)
@@ -114,7 +110,6 @@ def post_comment(comment_data):
         print(f"發佈留言失敗: {e.response.status_code} {e.response.text}")
 
 if __name__ == "__main__":
-    # 這部分的程式碼維持不變
     try:
         print("1. 正在取得 PR 的 diff 內容...")
         diff = get_pr_diff()
