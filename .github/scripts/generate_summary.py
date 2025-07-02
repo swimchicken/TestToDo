@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import google.generativeai as genai
+from datetime import datetime
 
 # --- 環境變數讀取 ---
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
@@ -253,161 +254,12 @@ def analyze_diff_with_gemini(diff_text):
         print(f"API 呼叫錯誤: {e}")
         return [{"topic": "API 錯誤", "description": f"呼叫 Gemini API 時發生錯誤: {str(e)}", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
 
-# === 新增的增強功能 ===
-def generate_enhanced_diff_html(code_snippet, file_path):
-    """生成增強型的程式碼diff HTML"""
-    
-    # 取得檔案副檔名來決定圖示
-    def get_file_icon(filepath):
-        ext = filepath.split('.')[-1].lower() if '.' in filepath else 'file'
-        icon_map = {
-            'js': ('JS', '#f7df1e', '#000'),
-            'jsx': ('JSX', '#61dafb', '#000'),
-            'ts': ('TS', '#3178c6', '#fff'),
-            'tsx': ('TSX', '#3178c6', '#fff'),
-            'py': ('PY', '#3776ab', '#fff'),
-            'html': ('HTML', '#e34c26', '#fff'),
-            'css': ('CSS', '#1572b6', '#fff'),
-            'json': ('JSON', '#292929', '#fff'),
-            'md': ('MD', '#083fa1', '#fff'),
-            'txt': ('TXT', '#6e7681', '#fff')
-        }
-        return icon_map.get(ext, ('FILE', '#6e7681', '#fff'))
-    
-    # 改進的diff解析
-    def parse_diff_lines(diff_text):
-        lines = diff_text.split('\n')
-        parsed = []
-        line_num = 1
-        
-        for line in lines:
-            line_type = 'context'
-            display_line = line
-            
-            # 識別diff標記
-            if line.startswith('@@'):
-                line_type = 'hunk'
-            elif line.startswith('+') and not line.startswith('+++'):
-                line_type = 'added'
-                display_line = line[1:]  # 移除 + 符號來顯示純程式碼
-            elif line.startswith('-') and not line.startswith('---'):
-                line_type = 'removed'  
-                display_line = line[1:]  # 移除 - 符號來顯示純程式碼
-            elif line.startswith('\\'):
-                line_type = 'meta'  # 元資訊行如 "\ No newline at end of file"
-            
-            parsed.append({
-                'content': display_line,
-                'type': line_type,
-                'number': line_num
-            })
-            line_num += 1
-        
-        return parsed
-    
-    # 改進的語法高亮函數
-    def highlight_syntax(code):
-        import re
-        import html
-        
-        # 先轉義HTML特殊字符
-        code = html.escape(code)
-        
-        # 關鍵字高亮 - 更精確的匹配
-        keywords = ['import', 'export', 'const', 'let', 'var', 'function', 'class', 
-                   'if', 'else', 'for', 'while', 'return', 'async', 'await', 'def', 
-                   'from', 'try', 'except', 'finally', 'with', 'as', 'in']
-        
-        # 按長度排序，避免短關鍵字被長關鍵字覆蓋
-        keywords.sort(key=len, reverse=True)
-        
-        for keyword in keywords:
-            # 只匹配完整的詞彙邊界
-            pattern = r'\b' + re.escape(keyword) + r'\b'
-            code = re.sub(pattern, f'<span style="color: #ff7b72;">{keyword}</span>', code)
-        
-        # 字串高亮 - 處理單引號和雙引號
-        code = re.sub(r'(&quot;)([^&quot;]*)(&quot;)', r'<span style="color: #a5d6ff;">\1\2\3</span>', code)
-        code = re.sub(r'(&#x27;)([^&#x27;]*)(&#x27;)', r'<span style="color: #a5d6ff;">\1\2\3</span>', code)
-        
-        # 註解高亮
-        code = re.sub(r'(//.*?$|#.*?$)', r'<span style="color: #8b949e;">\1</span>', code, flags=re.MULTILINE)
-        
-        # 函數名高亮
-        code = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(?=\()', r'<span style="color: #d2a8ff;">\1</span>', code)
-        
-        return code
-    
-    if not code_snippet.strip():
-        return "<p><em>沒有程式碼片段可顯示</em></p>"
-    
-    icon_text, bg_color, text_color = get_file_icon(file_path)
-    parsed_lines = parse_diff_lines(code_snippet)
-    
-    # 計算統計
-    additions = sum(1 for line in parsed_lines if line['type'] == 'added')
-    deletions = sum(1 for line in parsed_lines if line['type'] == 'removed')
-    
-    # 生成HTML
-    html = f'''
-<div style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; 
-            border: 1px solid #30363d; border-radius: 6px; overflow: hidden; 
-            background: #0d1117; margin: 8px 0;">
-    
-    <!-- 檔案標題列 -->
-    <div style="background: #161b22; padding: 8px 12px; border-bottom: 1px solid #21262d; 
-                display: flex; align-items: center; gap: 8px;">
-        <div style="background: {bg_color}; color: {text_color}; 
-                    padding: 2px 6px; border-radius: 3px; font-size: 10px; 
-                    font-weight: bold; min-width: 32px; text-align: center;">
-            {icon_text}
-        </div>
-        <span style="color: #58a6ff; font-weight: 600; font-size: 14px;">
-            {file_path}
-        </span>
-        <div style="margin-left: auto; display: flex; gap: 8px; font-size: 12px;">
-            <span style="color: #3fb950;">+{additions}</span>
-            <span style="color: #f85149;">-{deletions}</span>
-        </div>
-    </div>
-    
-    <!-- 程式碼內容 -->
-    <div style="max-height: 400px; overflow-y: auto;">'''
-    
-    for line_data in parsed_lines:
-        line_content = highlight_syntax(line_data['content'])
-        line_type = line_data['type']
-        line_number = line_data['number']
-        
-        # 根據類型設定樣式
-        if line_type == 'added':
-            bg_style = 'background: rgba(46, 160, 67, 0.15); border-left: 3px solid #3fb950;'
-        elif line_type == 'removed':
-            bg_style = 'background: rgba(248, 81, 73, 0.15); border-left: 3px solid #f85149;'
-        elif line_type == 'hunk':
-            bg_style = 'background: #21262d; color: #8b949e; font-weight: 600;'
-        else:
-            bg_style = 'background: transparent;'
-        
-        html += f'''
-        <div style="display: flex; min-height: 20px; font-size: 12px; {bg_style}">
-            <div style="background: #161b22; color: #656d76; padding: 0 8px; 
-                       min-width: 50px; text-align: right; border-right: 1px solid #21262d;">
-                {line_number}
-            </div>
-            <div style="flex: 1; padding: 0 8px; white-space: pre; color: #c9d1d9;">
-                {line_content}
-            </div>
-        </div>'''
-    
-    html += '''
-    </div>
-</div>'''
-    
-    return html
+def get_current_time():
+    """獲取當前時間"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
 
-def post_comment_enhanced(comment_data):
-    """發佈增強版的分析結果到 PR"""
+def post_comment_practical(comment_data):
+    """發佈實用版的分析結果到 PR - 完全相容GitHub"""
     
     # 獲取數據
     file_path = comment_data.get('file_path', 'N/A')
@@ -417,58 +269,141 @@ def post_comment_enhanced(comment_data):
     priority = comment_data.get('priority', 'Medium')
     snippet = comment_data.get('code_snippet', '').strip()
     
-    # 優先級樣式
-    priority_styles = {
-        'High': ('🔴', '#d1242f', '#ffffff'),
-        'Medium': ('🟡', '#bf8700', '#ffffff'), 
-        'Low': ('🟢', '#1a7f37', '#ffffff')
+    # 優先級表示
+    priority_info = {
+        'High': ('🔴', 'HIGH', '⚠️ 需要立即處理'),
+        'Medium': ('🟡', 'MEDIUM', '📋 建議處理'), 
+        'Low': ('🟢', 'LOW', '💡 可選改進')
     }
     
-    emoji, bg_color, text_color = priority_styles.get(priority, ('🟡', '#bf8700', '#ffffff'))
+    emoji, badge, desc = priority_info.get(priority, ('🟡', 'MEDIUM', '📋 建議處理'))
     
-    # 主要內容
-    body = f"""## 🤖 AI 程式碼審查建議
+    # 檔案類型檢測
+    def get_file_info(filepath):
+        ext = filepath.split('.')[-1].lower() if '.' in filepath else 'file'
+        file_types = {
+            'js': ('JavaScript', '⚡'),
+            'jsx': ('React JSX', '⚛️'),
+            'ts': ('TypeScript', '🔷'),
+            'tsx': ('React TSX', '⚛️'),
+            'py': ('Python', '🐍'),
+            'html': ('HTML', '🌐'),
+            'css': ('CSS', '🎨'),
+            'scss': ('SCSS', '🎨'),
+            'json': ('JSON', '📋'),
+            'md': ('Markdown', '📝'),
+            'yml': ('YAML', '⚙️'),
+            'yaml': ('YAML', '⚙️'),
+            'txt': ('Text', '📄'),
+            'java': ('Java', '☕'),
+            'go': ('Go', '🐹'),
+            'rs': ('Rust', '🦀'),
+            'cpp': ('C++', '⚙️'),
+            'c': ('C', '⚙️')
+        }
+        return file_types.get(ext, ('File', '📁'))
+    
+    file_type, file_emoji = get_file_info(file_path)
+    
+    # 分析程式碼片段統計
+    def analyze_diff(diff_text):
+        if not diff_text:
+            return 0, 0, []
+        
+        lines = diff_text.split('\n')
+        additions = 0
+        deletions = 0
+        important_changes = []
+        
+        for line in lines:
+            if line.startswith('+') and not line.startswith('+++'):
+                additions += 1
+                # 收集重要變更
+                line_lower = line.lower()
+                if any(keyword in line_lower for keyword in ['function', 'class', 'import', 'export', 'const', 'let', 'var', 'def', 'async', 'await']):
+                    clean_line = line[1:].strip()  # 移除 + 號
+                    important_changes.append(clean_line[:80] + '...' if len(clean_line) > 80 else clean_line)
+            elif line.startswith('-') and not line.startswith('---'):
+                deletions += 1
+        
+        return additions, deletions, important_changes[:3]  # 最多顯示3個重要變更
+    
+    additions, deletions, key_changes = analyze_diff(snippet)
+    
+    # 構建留言內容
+    body = f"""## 🤖 AI 程式碼審查報告
 
-<div style="display: inline-block; background: {bg_color}; color: {text_color}; 
-           padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 4px 0;">
-    {emoji} {priority} Priority
-</div>
+### {emoji} **{badge} PRIORITY** {desc}
 
-### 📁 檔案路徑
-```
-{file_path}
-```
+---
 
-### 🔍 變更類型
-**{topic}**
+**📁 檔案**: `{file_path}` {file_emoji} *{file_type}*  
+**🏷️ 變更類型**: **{topic}**  
+**📊 影響範圍**: +{additions} | -{deletions} 行
+
+---
 
 ### 📝 分析說明
+
 {description}"""
 
-    # 添加建議區塊（如果有建議）
+    # 添加建議區塊
     if suggestion.strip():
         body += f"""
 
 ### 💡 改進建議
-> {suggestion}"""
 
-    # 添加增強型程式碼變更區塊
-    if snippet:
-        enhanced_diff = generate_enhanced_diff_html(snippet, file_path)
-        
+```
+{suggestion}
+```"""
+
+    # 添加關鍵變更摘要
+    if key_changes:
         body += f"""
 
-### 📋 程式碼變更詳情
+### 🔍 關鍵變更摘要
+
+"""
+        for i, change in enumerate(key_changes, 1):
+            body += f"{i}. `{change}`\n"
+
+    # 添加程式碼區塊
+    if snippet:
+        body += f"""
+
+### 📋 完整程式碼差異
 
 <details>
-<summary><strong>點擊展開檢視程式碼差異</strong></summary>
+<summary>點擊展開檢視完整diff</summary>
 
-{enhanced_diff}
+```diff
+{snippet}
+```
 
-</details>"""
-    
-    # 添加底部標識
-    body += "\n\n---\n*🤖 由 AI 程式碼審查助手自動生成 | 點擊上方 Details 展開檢視*"
+</details>
+
+**📖 閱讀提示**:
+- `+ 綠色行`: 新增的程式碼
+- `- 紅色行`: 刪除的程式碼  
+- `  白色行`: 上下文程式碼"""
+
+    # 添加實用工具建議
+    body += f"""
+
+---
+
+### 🛠️ 推薦檢視工具
+
+| 工具類型 | 建議操作 | 說明 |
+|---------|---------|------|
+| **GitHub Web IDE** | 按鍵盤 `.` 鍵 | 在瀏覽器中開啟完整編輯器 |
+| **本地檢視** | `git fetch && git checkout pr/{PR_NUMBER}` | 切換到此PR分支 |
+| **線上對比** | 複製程式碼到 [diffchecker.com](https://www.diffchecker.com) | 視覺化對比差異 |
+| **IDE整合** | 使用 VS Code GitHub 擴充功能 | 直接在IDE中檢視PR |
+
+---
+
+<sub>🤖 *由 AI 程式碼審查助手自動生成* | 📅 *{get_current_time()}*</sub>"""
 
     # 發送請求
     url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
@@ -477,14 +412,17 @@ def post_comment_enhanced(comment_data):
     
     try:
         response.raise_for_status()
-        print(f"✅ 成功發佈增強版留言: {topic} @ {file_path}")
+        print(f"✅ 成功發佈實用版留言: {topic} @ {file_path}")
+        print(f"   📊 統計: +{additions}/-{deletions} 行, {len(key_changes)} 個關鍵變更")
+        return True
     except requests.exceptions.HTTPError as e:
         print(f"❌ 發佈留言失敗: {e.response.status_code}")
         print(f"錯誤詳情: {e.response.text}")
+        return False
 
-# 保留原本的 post_comment 函數供備用
+# 保留原版函數作為備用
 def post_comment(comment_data):
-    """發佈專業格式的分析結果到 PR"""
+    """發佈原版分析結果到 PR"""
     
     # 獲取數據
     file_path = comment_data.get('file_path', 'N/A')
@@ -569,21 +507,21 @@ if __name__ == "__main__":
             print("❌ AI 未回傳任何分析要點")
         else:
             print(f"\n3. 分析完成！取得 {len(analysis_points)} 個要點")
-            print("準備發佈分析結果...")
+            print("準備發佈實用版分析結果...")
             
-            # 🚀 這裡是關鍵修改：使用增強版留言函數
-            USE_ENHANCED_DISPLAY = True  # 設定為 True 使用增強版顯示
-            
+            # 🚀 使用實用版留言函數
+            success_count = 0
             for i, point in enumerate(analysis_points, 1):
                 print(f"\n發佈第 {i} 個分析要點...")
                 
-                if USE_ENHANCED_DISPLAY:
-                    post_comment_enhanced(point)  # 使用增強版
+                if post_comment_practical(point):
+                    success_count += 1
                 else:
-                    post_comment(point)  # 使用原版
+                    print("嘗試使用原版格式...")
+                    post_comment(point)  # 如果實用版失敗，回退到原版
         
         print("\n" + "=" * 50)
-        print("✅ 所有分析要點已成功發佈！")
+        print(f"✅ 所有分析要點已成功發佈！成功發佈 {success_count}/{len(analysis_points)} 個實用版留言")
         
     except Exception as e:
         print(f"\n❌ 發生未知錯誤: {e}")
