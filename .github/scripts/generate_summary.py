@@ -417,85 +417,58 @@ def post_comment_enhanced(comment_data):
     priority = comment_data.get('priority', 'Medium')
     snippet = comment_data.get('code_snippet', '').strip()
     
-    # 優先級emoji和樣式
-    priority_info = {
-        'High': ('🔴', '高優先級'),
-        'Medium': ('🟡', '中優先級'), 
-        'Low': ('🟢', '低優先級')
+    # 優先級樣式
+    priority_styles = {
+        'High': ('🔴', '#d1242f', '#ffffff'),
+        'Medium': ('🟡', '#bf8700', '#ffffff'), 
+        'Low': ('🟢', '#1a7f37', '#ffffff')
     }
     
-    emoji, priority_text = priority_info.get(priority, ('🟡', '中優先級'))
-    
-    # 檔案類型圖示
-    def get_simple_icon(filepath):
-        ext = filepath.split('.')[-1].lower() if '.' in filepath else 'file'
-        icons = {
-            'js': '🟨 JS', 'jsx': '⚛️ JSX', 'ts': '🔷 TS', 'tsx': '⚛️ TSX',
-            'py': '🐍 PY', 'html': '🌐 HTML', 'css': '🎨 CSS', 
-            'json': '📋 JSON', 'md': '📝 MD', 'txt': '📄 TXT'
-        }
-        return icons.get(ext, '📁 FILE')
-    
-    file_icon = get_simple_icon(file_path)
+    emoji, bg_color, text_color = priority_styles.get(priority, ('🟡', '#bf8700', '#ffffff'))
     
     # 主要內容
     body = f"""## 🤖 AI 程式碼審查建議
 
-### {emoji} {priority_text}
+<div style="display: inline-block; background: {bg_color}; color: {text_color}; 
+           padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; margin: 4px 0;">
+    {emoji} {priority} Priority
+</div>
 
-#### 📁 檔案: `{file_path}` {file_icon}
+### 📁 檔案路徑
+```
+{file_path}
+```
 
-#### 🔍 變更類型: **{topic}**
+### 🔍 變更類型
+**{topic}**
 
-#### 📝 分析說明
+### 📝 分析說明
 {description}"""
 
-    # 添加建議區塊
+    # 添加建議區塊（如果有建議）
     if suggestion.strip():
         body += f"""
 
-#### 💡 改進建議
+### 💡 改進建議
 > {suggestion}"""
 
-    # 處理程式碼片段 - 使用更簡單但更穩定的方式
+    # 添加增強型程式碼變更區塊
     if snippet:
-        # 統計變更
-        lines = snippet.split('\n')
-        additions = sum(1 for line in lines if line.startswith('+') and not line.startswith('+++'))
-        deletions = sum(1 for line in lines if line.startswith('-') and not line.startswith('---'))
+        enhanced_diff = generate_enhanced_diff_html(snippet, file_path)
         
         body += f"""
 
-#### 📊 變更統計
-- ✅ 新增: {additions} 行
-- ❌ 刪除: {deletions} 行
-
-#### 📋 程式碼變更
+### 📋 程式碼變更詳情
 
 <details>
-<summary>🔍 <strong>點擊展開檢視程式碼差異</strong></summary>
+<summary><strong>點擊展開檢視程式碼差異</strong></summary>
 
-```diff
-{snippet}
-```
-
-**💡 提示**: 
-- 🟢 綠色行 (+) 表示新增的程式碼
-- 🔴 紅色行 (-) 表示刪除的程式碼  
-- ⚫ 白色行表示上下文程式碼
+{enhanced_diff}
 
 </details>"""
     
-    # 添加互動提示
-    body += f"""
-
----
-#### 🛠️ 進階檢視選項
-- **GitHub Web IDE**: 按 `.` 鍵開啟線上編輯器檢視完整檔案
-- **本地檢視**: `git checkout {PR_NUMBER}` 切換到這個PR分支
-- **線上工具**: 複製程式碼到 [diffchecker.com](https://www.diffchecker.com) 進行對比
-
-*🤖 由 AI 程式碼審查助手自動生成*"""
+    # 添加底部標識
+    body += "\n\n---\n*🤖 由 AI 程式碼審查助手自動生成 | 點擊上方 Details 展開檢視*"
 
     # 發送請求
     url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
@@ -505,11 +478,9 @@ def post_comment_enhanced(comment_data):
     try:
         response.raise_for_status()
         print(f"✅ 成功發佈增強版留言: {topic} @ {file_path}")
-        return True
     except requests.exceptions.HTTPError as e:
         print(f"❌ 發佈留言失敗: {e.response.status_code}")
         print(f"錯誤詳情: {e.response.text}")
-        return False
 
 # 保留原本的 post_comment 函數供備用
 def post_comment(comment_data):
