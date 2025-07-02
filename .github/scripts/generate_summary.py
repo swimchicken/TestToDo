@@ -8,7 +8,7 @@ GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 REPO = os.environ['GITHUB_REPOSITORY']
 PR_NUMBER = os.environ['PR_NUMBER']
 GEMINI_API_KEY = os.environ['GEMINI_API_KEY']
-GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite-preview-06-17')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-1.5-flash-latest')
 
 # --- API 設定 (維持不變) ---
 GITHUB_API_URL = "https://api.github.com"
@@ -33,16 +33,12 @@ def get_pr_diff():
     return response.text[:30000]
 
 def analyze_diff_with_gemini(diff_text):
-    """
-    (*** 主要變更點 ***)
-    使用 Gemini API 分析 diff，並要求回傳包含程式碼片段的結構化物件。
-    """
+    """使用 Gemini API 分析 diff，並要求回傳包含程式碼片段的結構化物件 (維持不變)"""
     if not diff_text.strip():
         return [{"file_path": "N/A", "topic": "無變更", "description": "這個 PR 不包含程式碼變更，或變更過大無法分析。", "code_snippet": ""}]
 
     model = genai.GenerativeModel(GEMINI_MODEL)
     
-    # *** 變更點 1: 更新指令 (Prompt) 來要求包含 code_snippet 的 JSON 物件 ***
     prompt = f"""
     您是一位頂尖的 GitHub 程式碼審查機器人。請仔細分析下方的 Pull Request diff 內容。
     您的任務是：
@@ -60,7 +56,7 @@ def analyze_diff_with_gemini(diff_text):
             "file_path": "src/utils/calculator.js",
             "topic": "Bug 修復",
             "description": "修正了除法運算中未處理除數為零的邊界情況，避免程式崩潰。",
-            "code_snippet": "@@ -25,7 +25,9 @@\n function divide(a, b) {\n-  return a / b;\n+  if (b === 0) {\n+    return null;\n+  }\n+  return a / b;\n }"
+            "code_snippet": "@@ -25,7 +25,9 @@\\n function divide(a, b) {\\n-  return a / b;\\n+  if (b === 0) {\\n+    return null;\\n+  }\\n+  return a / b;\\n }"
         }}
     ]
 
@@ -82,19 +78,66 @@ def analyze_diff_with_gemini(diff_text):
             return [{"topic": "AI 回應格式錯誤", "description": "AI 未能回傳預期的列表格式。", "file_path": "Error", "code_snippet": ""}]
     except (json.JSONDecodeError, Exception) as e:
         print(f"無法解析 AI 回應或 API 出錯: {e}")
-        return [{"topic": "AI 分析失敗", "description": f"AI 分析時發生錯誤。\n原始回應:\n{response.text}", "file_path": "Error", "code_snippet": str(e)}]
+        return [{"topic": "AI 分析失敗", "description": f"AI 分析時發生錯誤。\\n原始回應:\\n{response.text}", "file_path": "Error", "code_snippet": str(e)}]
 
 
 def post_comment(comment_data):
     """
     (*** 主要變更點 ***)
-    將包含程式碼片段的結構化資料，格式化為指定的 Markdown 格式後再發佈。
+    重構字串組合邏輯，避免巢狀的多行字串，解決 SyntaxError。
     """
-    # *** 變更點 2: 根據新的資料結構來組合留言內容，並加入 diff 程式碼區塊 ***
+    # *** 變更點: 改用更穩健的方式組合留言內容 ***
+    
+    # 1. 先建立留言的主要部分
+    body = f"""🤖 **AI 分析要點**
+
+**檔案路徑:** `{comment_data.get('file_path', 'N/A')}`
+**變更主題:** {comment_data.get('topic', 'N/A')}
+**詳細說明:**
+{comment_data.get('description', '無說明')}"""
+
+    # 2. 如果有程式碼片段，再將其附加到主要留言後面
     snippet = comment_data.get('code_snippet', '').strip()
-    code_block = ""
     if snippet:
         code_block = f"""
+
 **相關程式碼變更:**
 ```diff
 {snippet}
+```"""
+        body += code_block
+
+    # 3. 發佈組合好的完整留言
+    url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
+    payload = {'body': body}
+    response = requests.post(url, json=payload, headers=GITHUB_HEADERS)
+    try:
+        response.raise_for_status()
+        print(f"成功發佈留言: {comment_data.get('topic', 'N/A')} @ {comment_data.get('file_path', 'N/A')}")
+    except requests.exceptions.HTTPError as e:
+        print(f"發佈留言失敗: {e.response.status_code} {e.response.text}")
+
+if __name__ == "__main__":
+    try:
+        print("1. 正在取得 PR 的 diff 內容...")
+        diff = get_pr_diff()
+        
+        print("2. 正在呼叫 Gemini API 進行深度分析...")
+        analysis_points = analyze_diff_with_gemini(diff)
+        
+        if not analysis_points:
+            print("AI 未回傳任何分析要點。")
+        else:
+            print(f"3. 分析完成，取得 {len(analysis_points)} 個要點。準備逐一發佈...")
+            for point in analysis_points:
+                post_comment(point)
+        
+        print("✅ 所有分析要點已成功發佈！")
+    except Exception as e:
+        print(f"❌ 發生未知錯誤： {e}")
+        post_comment({
+            "file_path": "Bot Execution Error",
+            "topic": "機器人執行失敗",
+            "description": f"Bot 在執行過程中發生嚴重錯誤，無法完成分析：\n`{str(e)}`",
+            "code_snippet": ""
+        })
