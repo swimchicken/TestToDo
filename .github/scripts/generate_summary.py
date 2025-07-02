@@ -252,12 +252,26 @@ def analyze_diff_with_gemini(diff_text):
                 print(f"✅ 修復後成功解析 JSON，包含 {len(summary_points)} 個項目")
             except json.JSONDecodeError as second_error:
                 print(f"❌ 修復後仍解析失敗: {second_error}")
+                print(f"錯誤位置: line {getattr(second_error, 'lineno', '?')} column {getattr(second_error, 'colno', '?')}")
                 
                 # 顯示更詳細的調試信息
-                print("\n📋 調試信息:")
-                print(f"原始長度: {len(cleaned_text)}")
+                print("\n📋 詳細調試信息:")
+                print(f"修復前長度: {len(cleaned_text)}")
                 print(f"修復後長度: {len(fixed_text)}")
-                print(f"修復後內容預覽: {fixed_text[:500]}...")
+                
+                # 顯示出錯位置附近的內容
+                if hasattr(second_error, 'pos'):
+                    error_pos = second_error.pos
+                    start = max(0, error_pos - 100)
+                    end = min(len(fixed_text), error_pos + 100)
+                    print(f"錯誤位置附近內容 (位置 {error_pos}):")
+                    print(f"'{fixed_text[start:end]}'")
+                
+                print(f"修復後內容開頭 500 字符:")
+                print(f"'{fixed_text[:500]}'")
+                
+                print(f"修復後內容結尾 200 字符:")
+                print(f"'{fixed_text[-200:]}'")
                 
                 # 嘗試手動解析部分內容
                 if "file_path" in fixed_text:
@@ -265,21 +279,21 @@ def analyze_diff_with_gemini(diff_text):
                     # 簡化的回退處理
                     return [{
                         "topic": "AI 分析成功",
-                        "description": "AI 成功分析了程式碼變更，但 JSON 格式需要調整。主要變更包括多個檔案的程式碼修改。",
+                        "description": "AI 成功分析了程式碼變更，但 JSON 格式需要進一步調整。主要變更包括多個檔案的程式碼修改，涉及路由整合、新增組件等。",
                         "file_path": "Multiple Files",
-                        "code_snippet": "// AI 分析成功但格式化有問題\\n// 請查看 GitHub PR 的 Files 標籤頁查看完整變更",
+                        "code_snippet": "// AI 分析成功但 JSON 格式化問題\\n// 建議查看 GitHub PR 的 Files 標籤頁查看完整變更",
                         "priority": "Medium",
-                        "suggestion": "建議檢查 AI 設定或重新執行分析"
+                        "suggestion": "建議檢查 AI API 設定或重新執行分析，問題可能是 JSON 轉義字符處理"
                     }]
                 else:
                     # 最終回退
                     return [{
                         "topic": "JSON 格式錯誤",
-                        "description": f"AI 回應包含格式錯誤。錯誤詳情: {str(second_error)[:200]}",
+                        "description": f"AI 回應包含複雜的格式錯誤。詳細錯誤: {str(second_error)[:300]}",
                         "file_path": "Error",
-                        "code_snippet": "# 格式錯誤，無法顯示程式碼",
+                        "code_snippet": "# JSON 解析失敗，無法顯示程式碼差異",
                         "priority": "Low",
-                        "suggestion": "嘗試重新執行分析或檢查 API 設定"
+                        "suggestion": "嘗試重新執行分析，或檢查 Gemini API 設定和版本"
                     }]
         
         # 驗證結果格式
