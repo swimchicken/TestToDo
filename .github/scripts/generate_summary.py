@@ -176,7 +176,7 @@ def analyze_diff_with_gemini(diff_text):
     - `description`: 詳細分析變更內容和影響
     - `priority`: 優先級（"High"、"Medium"、"Low"）
     - `suggestion`: 具體的改進建議（如果沒有建議可填 ""）
-    - `code_snippet`: 相關的關鍵程式碼片段
+    - `code_snippet`: 相關的關鍵程式碼片段 (最多5行)
 
     範例輸出：
     [
