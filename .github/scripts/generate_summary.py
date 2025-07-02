@@ -207,166 +207,51 @@ def analyze_diff_with_gemini(diff_text):
         if not response.text:
             return [{"topic": "AI 無回應", "description": "Gemini API 沒有返回任何內容，可能是因為內容過長或 API 限制", "file_path": "Error", "code_snippet": "", "priority": "Medium", "suggestion": "嘗試縮短 diff 內容或檢查 API 設定"}]
         
-        # 更強力的文本清理
+        # 清理回應文本
         cleaned_text = response.text.strip()
-        
-        # 移除 markdown 代碼塊標記
         cleaned_text = cleaned_text.replace('```json', '').replace('```', '').strip()
         
-        # 修復常見的 JSON 格式問題
-        import re
-        
-        # 移除或轉義控制字符
-        cleaned_text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', cleaned_text)  # 移除控制字符
-        
-        # 修復可能的換行問題
-        cleaned_text = cleaned_text.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-        
-        # 如果有未閉合的字串，嘗試修復
-        cleaned_text = re.sub(r'",\s*
-        if isinstance(summary_points, list):
-            print(f"成功解析 {len(summary_points)} 個分析要點")
-            return summary_points
-        else:
-            return [{"topic": "格式錯誤", "description": "AI 回應不是預期的列表格式", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
-            
-    except json.JSONDecodeError as e:
-        print(f"JSON 解析錯誤: {e}")
-        print(f"原始回應: {response.text[:500] if response.text else 'None'}")
-        return [{"topic": "解析失敗", "description": f"無法解析 AI 回應為 JSON 格式", "file_path": "Error", "code_snippet": str(e), "priority": "Low", "suggestion": ""}]
-    except Exception as e:
-        print(f"API 呼叫錯誤: {e}")
-        return [{"topic": "API 錯誤", "description": f"呼叫 Gemini API 時發生錯誤: {str(e)}", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
-
-
-def post_comment(comment_data):
-    """發佈專業格式的分析結果到 PR"""
-    
-    # 獲取數據
-    file_path = comment_data.get('file_path', 'N/A')
-    topic = comment_data.get('topic', 'N/A')
-    description = comment_data.get('description', '無說明')
-    suggestion = comment_data.get('suggestion', '')
-    priority = comment_data.get('priority', 'Medium')
-    snippet = comment_data.get('code_snippet', '').strip()
-    
-    # 優先級標籤和顏色
-    priority_badges = {
-        'High': '🔴 **High Priority**',
-        'Medium': '🟡 **Medium Priority**', 
-        'Low': '🟢 **Low Priority**'
-    }
-    
-    # 主要內容
-    body = f"""## 🤖 AI 程式碼審查建議
-
-{priority_badges.get(priority, '🟡 **Medium Priority**')}
-
-### 📁 `{file_path}`
-
-**變更類型：** {topic}
-
-**分析說明：**
-{description}"""
-
-    # 添加建議區塊（如果有建議）
-    if suggestion.strip():
-        body += f"""
-
-**💡 建議改進：**
-> {suggestion}"""
-
-    # 添加程式碼變更區塊（如果有程式碼片段）
-    if snippet:
-        body += f"""
-
-### 📋 相關程式碼變更
-
-<details>
-<summary>點擊查看程式碼差異</summary>
-
-```diff
-{snippet}
-```
-
-</details>"""
-    
-    # 添加底部分隔線
-    body += "\n\n---\n*由 AI 程式碼審查助手自動生成*"
-
-    # 發送請求
-    url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
-    payload = {'body': body}
-    response = requests.post(url, json=payload, headers=GITHUB_HEADERS)
-    
-    try:
-        response.raise_for_status()
-        print(f"✅ 成功發佈留言: {topic} @ {file_path}")
-    except requests.exceptions.HTTPError as e:
-        print(f"❌ 發佈留言失敗: {e.response.status_code}")
-        print(f"錯誤詳情: {e.response.text}")
-
-if __name__ == "__main__":
-    try:
-        print("🚀 開始分析 Pull Request...")
-        print("=" * 50)
-        
-        print("1. 正在取得 PR 的 diff 內容...")
-        diff = get_pr_diff()
-        
-        if not diff or len(diff.strip()) < 50:
-            print("⚠️  警告: 獲取到的 diff 內容過短或為空")
-            print(f"Diff 內容預覽: {diff[:200] if diff else 'None'}")
-        
-        print("\n2. 正在呼叫 Gemini API 進行深度分析...")
-        analysis_points = analyze_diff_with_gemini(diff)
-        
-        if not analysis_points:
-            print("❌ AI 未回傳任何分析要點")
-        else:
-            print(f"\n3. 分析完成！取得 {len(analysis_points)} 個要點")
-            print("準備發佈分析結果...")
-            
-            for i, point in enumerate(analysis_points, 1):
-                print(f"\n發佈第 {i} 個分析要點...")
-                post_comment(point)
-        
-        print("\n" + "=" * 50)
-        print("✅ 所有分析要點已成功發佈！")
-        
-    except Exception as e:
-        print(f"\n❌ 發生未知錯誤: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # 發佈錯誤信息
-        post_comment({
-            "file_path": "Bot Execution Error",
-            "topic": "機器人執行失敗",
-            "description": f"Bot 在執行過程中發生嚴重錯誤，請檢查配置和權限設定。",
-            "priority": "High",
-            "suggestion": "請檢查 GitHub Actions 日誌獲取詳細錯誤信息，並確認所有必要的環境變數都已正確設定。",
-            "code_snippet": f"錯誤詳情: {str(e)}"
-        }), '"}', cleaned_text, flags=re.MULTILINE)
-        
-        print(f"清理後的回應預覽: {cleaned_text[:200]}...")
+        print(f"清理後的回應預覽: {cleaned_text[:300]}...")
         
         # 嘗試解析 JSON
-        summary_points = json.loads(cleaned_text)
+        try:
+            summary_points = json.loads(cleaned_text)
+        except json.JSONDecodeError as parse_error:
+            print(f"JSON 解析失敗: {parse_error}")
+            print("嘗試進行字符清理...")
+            
+            # 移除可能有問題的控制字符
+            import re
+            cleaned_text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', cleaned_text)
+            
+            try:
+                summary_points = json.loads(cleaned_text)
+            except json.JSONDecodeError as second_error:
+                print(f"第二次解析也失敗: {second_error}")
+                
+                # 顯示調試信息
+                debug_text = cleaned_text[:1000] if len(cleaned_text) > 1000 else cleaned_text
+                print(f"問題內容: {debug_text}")
+                
+                # 提供回退結果
+                return [{
+                    "topic": "JSON 解析錯誤",
+                    "description": f"AI 分析成功但回應格式錯誤。錯誤信息: {str(second_error)}",
+                    "file_path": "Multiple Files",
+                    "code_snippet": "無法顯示程式碼片段",
+                    "priority": "Medium",
+                    "suggestion": "建議檢查 API 設定或重新執行分析"
+                }]
+        
         if isinstance(summary_points, list):
             print(f"成功解析 {len(summary_points)} 個分析要點")
             return summary_points
         else:
             return [{"topic": "格式錯誤", "description": "AI 回應不是預期的列表格式", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
             
-    except json.JSONDecodeError as e:
-        print(f"JSON 解析錯誤: {e}")
-        print(f"原始回應: {response.text[:500] if response.text else 'None'}")
-        return [{"topic": "解析失敗", "description": f"無法解析 AI 回應為 JSON 格式", "file_path": "Error", "code_snippet": str(e), "priority": "Low", "suggestion": ""}]
     except Exception as e:
         print(f"API 呼叫錯誤: {e}")
         return [{"topic": "API 錯誤", "description": f"呼叫 Gemini API 時發生錯誤: {str(e)}", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
-
 
 def post_comment(comment_data):
     """發佈專業格式的分析結果到 PR"""
