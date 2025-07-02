@@ -12,7 +12,7 @@ REPO = os.environ.get('GITHUB_REPOSITORY')
 PR_NUMBER = os.environ.get('PR_NUMBER')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 # GEMINI_MODEL 的拼寫錯誤已在環境變數名稱中修正
-GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-1.5-flash')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-lite-preview-06-17')
 
 # --- API 設定 ---
 GITHUB_API_URL = "https://api.github.com"
