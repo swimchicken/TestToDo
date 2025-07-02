@@ -150,40 +150,46 @@ def get_pr_diff():
 def analyze_diff_with_gemini(diff_text):
     """使用 Gemini API 分析 diff"""
     if not diff_text.strip():
-        return [{"file_path": "N/A", "topic": "無變更", "description": "這個 PR 不包含程式碼變更，或變更過大無法分析。", "code_snippet": ""}]
+        return [{"file_path": "N/A", "topic": "無變更", "description": "這個 PR 不包含程式碼變更，或變更過大無法分析。", "code_snippet": "", "priority": "Low", "suggestion": ""}]
 
     model = genai.GenerativeModel(GEMINI_MODEL)
     
-    # 添加更詳細的 prompt
+    # 改進的 prompt，要求更專業的分析
     prompt_template = """
-    您是一位頂尖的 GitHub 程式碼審查機器人。請仔細分析下方的 Pull Request diff 內容。
+    您是一位專業的 GitHub 程式碼審查專家。請仔細分析下方的 Pull Request diff 內容，提供專業且實用的程式碼審查建議。
 
-    **重要指示：**
-    1. 請關注所有類型的文件變更，不只是 markdown 文件
-    2. 優先分析程式碼文件 (.py, .js, .ts, .java, .go 等) 的變更
-    3. 對每一個重要的、邏輯獨立的變更，產生一個獨立的分析
-    4. **必須**格式化為 JSON 陣列回應
+    **分析要求：**
+    1. 關注程式碼品質、安全性、效能和最佳實踐
+    2. 提供具體的改進建議
+    3. 評估變更的重要性和優先級
+    4. 專注於程式碼文件變更，忽略純文檔變更（除非涉及重要配置）
 
-    您的任務是：
-    1. 識別所有重要的變更（程式碼邏輯、新功能、bug 修復、配置變更等）
-    2. 為每個重要變更創建一個分析條目
-    3. 每個 JSON 物件必須包含四個 key：
-        - `file_path`: (字串) 變更的檔案完整路徑
-        - `topic`: (字串) 用 2-5 個字精準總結變更主題
-        - `description`: (字串) 詳細說明變更內容、原因與影響
-        - `code_snippet`: (字串) 最相關的 diff 程式碼片段
+    **回應格式：**必須回傳 JSON 陣列，每個物件包含以下 6 個欄位：
+    - `file_path`: 檔案路徑
+    - `topic`: 變更類型（如："新增功能"、"Bug修復"、"效能優化"、"安全性改進"）
+    - `description`: 詳細分析變更內容和影響
+    - `priority`: 優先級（"High"、"Medium"、"Low"）
+    - `suggestion`: 具體的改進建議（如果沒有建議可填 ""）
+    - `code_snippet`: 相關的 diff 程式碼片段
+
+    **優先級判斷標準：**
+    - High: 安全漏洞、破壞性變更、關鍵 bug 修復
+    - Medium: 新功能、重要優化、架構調整
+    - Low: 程式碼清理、註解更新、小幅改進
 
     範例輸出：
     [
         {
-            "file_path": "src/main.py",
+            "file_path": "src/auth/AuthContext.js",
             "topic": "新增功能",
-            "description": "新增了使用者驗證功能，包含密碼加密和 JWT token 生成機制。",
-            "code_snippet": "@@ -10,0 +11,5 @@\\n+def authenticate_user(username, password):\\n+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())\\n+    # 驗證邏輯\\n+    return generate_jwt_token(username)"
+            "description": "實作使用者認證 Context，包含登入狀態管理和 API 呼叫邏輯。這是一個重要的架構變更，為應用程式提供了統一的認證機制。",
+            "priority": "Medium",
+            "suggestion": "建議新增錯誤處理機制和登入逾時處理，並考慮使用 TypeScript 提升型別安全性。",
+            "code_snippet": "+export const useAuth = () => {\\n+  const context = useContext(AuthContext);\\n+  if (!context) {\\n+    throw new Error('useAuth must be used within an AuthProvider');\\n+  }"
         }
     ]
 
-    請用「繁體中文」分析，並特別關注程式碼變更：
+    請用繁體中文分析以下 diff：
 
     ```diff
     __DIFF_PLACEHOLDER__
@@ -198,7 +204,7 @@ def analyze_diff_with_gemini(diff_text):
         print(f"Gemini API 回應長度: {len(response.text) if response.text else 0}")
         
         if not response.text:
-            return [{"topic": "AI 無回應", "description": "Gemini API 沒有返回任何內容", "file_path": "Error", "code_snippet": ""}]
+            return [{"topic": "AI 無回應", "description": "Gemini API 沒有返回任何內容，可能是因為內容過長或 API 限制", "file_path": "Error", "code_snippet": "", "priority": "Medium", "suggestion": "嘗試縮短 diff 內容或檢查 API 設定"}]
             
         cleaned_text = response.text.strip().replace('```json', '').replace('```', '').strip()
         print(f"清理後的回應預覽: {cleaned_text[:200]}...")
@@ -208,42 +214,80 @@ def analyze_diff_with_gemini(diff_text):
             print(f"成功解析 {len(summary_points)} 個分析要點")
             return summary_points
         else:
-            return [{"topic": "格式錯誤", "description": "AI 回應不是預期的列表格式", "file_path": "Error", "code_snippet": ""}]
+            return [{"topic": "格式錯誤", "description": "AI 回應不是預期的列表格式", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
             
     except json.JSONDecodeError as e:
         print(f"JSON 解析錯誤: {e}")
         print(f"原始回應: {response.text[:500] if response.text else 'None'}")
-        return [{"topic": "解析失敗", "description": f"無法解析 AI 回應為 JSON 格式", "file_path": "Error", "code_snippet": str(e)}]
+        return [{"topic": "解析失敗", "description": f"無法解析 AI 回應為 JSON 格式", "file_path": "Error", "code_snippet": str(e), "priority": "Low", "suggestion": ""}]
     except Exception as e:
         print(f"API 呼叫錯誤: {e}")
-        return [{"topic": "API 錯誤", "description": f"呼叫 Gemini API 時發生錯誤: {str(e)}", "file_path": "Error", "code_snippet": ""}]
+        return [{"topic": "API 錯誤", "description": f"呼叫 Gemini API 時發生錯誤: {str(e)}", "file_path": "Error", "code_snippet": "", "priority": "Low", "suggestion": ""}]
 
 
 def post_comment(comment_data):
-    """發佈分析結果到 PR"""
-    body = f"""🤖 **AI 分析要點**
-
-**檔案路徑:** `{comment_data.get('file_path', 'N/A')}`
-**變更主題:** {comment_data.get('topic', 'N/A')}
-**詳細說明:**
-{comment_data.get('description', '無說明')}"""
-
+    """發佈專業格式的分析結果到 PR"""
+    
+    # 獲取數據
+    file_path = comment_data.get('file_path', 'N/A')
+    topic = comment_data.get('topic', 'N/A')
+    description = comment_data.get('description', '無說明')
+    suggestion = comment_data.get('suggestion', '')
+    priority = comment_data.get('priority', 'Medium')
     snippet = comment_data.get('code_snippet', '').strip()
+    
+    # 優先級標籤和顏色
+    priority_badges = {
+        'High': '🔴 **High Priority**',
+        'Medium': '🟡 **Medium Priority**', 
+        'Low': '🟢 **Low Priority**'
+    }
+    
+    # 主要內容
+    body = f"""## 🤖 AI 程式碼審查建議
+
+{priority_badges.get(priority, '🟡 **Medium Priority**')}
+
+### 📁 `{file_path}`
+
+**變更類型：** {topic}
+
+**分析說明：**
+{description}"""
+
+    # 添加建議區塊（如果有建議）
+    if suggestion.strip():
+        body += f"""
+
+**💡 建議改進：**
+> {suggestion}"""
+
+    # 添加程式碼變更區塊（如果有程式碼片段）
     if snippet:
         body += f"""
 
-**相關程式碼變更:**
+### 📋 相關程式碼變更
+
+<details>
+<summary>點擊查看程式碼差異</summary>
+
 ```diff
 {snippet}
-```"""
+```
 
+</details>"""
+    
+    # 添加底部分隔線
+    body += "\n\n---\n*由 AI 程式碼審查助手自動生成*"
+
+    # 發送請求
     url = f"{GITHUB_API_URL}/repos/{REPO}/issues/{PR_NUMBER}/comments"
     payload = {'body': body}
     response = requests.post(url, json=payload, headers=GITHUB_HEADERS)
     
     try:
         response.raise_for_status()
-        print(f"✅ 成功發佈留言: {comment_data.get('topic', 'N/A')} @ {comment_data.get('file_path', 'N/A')}")
+        print(f"✅ 成功發佈留言: {topic} @ {file_path}")
     except requests.exceptions.HTTPError as e:
         print(f"❌ 發佈留言失敗: {e.response.status_code}")
         print(f"錯誤詳情: {e.response.text}")
@@ -285,6 +329,8 @@ if __name__ == "__main__":
         post_comment({
             "file_path": "Bot Execution Error",
             "topic": "機器人執行失敗",
-            "description": f"Bot 在執行過程中發生嚴重錯誤：\n```\n{str(e)}\n```",
-            "code_snippet": ""
+            "description": f"Bot 在執行過程中發生嚴重錯誤，請檢查配置和權限設定。",
+            "priority": "High",
+            "suggestion": "請檢查 GitHub Actions 日誌獲取詳細錯誤信息，並確認所有必要的環境變數都已正確設定。",
+            "code_snippet": f"錯誤詳情: {str(e)}"
         })
