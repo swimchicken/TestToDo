@@ -253,35 +253,10 @@ def create_github_style_comment(analysis_data):
 {code_to_show}
 ```"""
 
-    # 添加操作提示
+    # 添加底部標籤（移除了"如何修改"部分）
     body += f"""
 
 ---
-
-### 🛠️ 如何修改
-
-<div style="background-color: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px; margin: 12px 0;">
-
-**方法一：GitHub Web Editor**
-1. 按 <kbd>.</kbd> 鍵開啟 GitHub Web IDE
-2. 找到檔案 `{file_path}`{f' 第 {line_number} 行' if line_number else ''}
-3. 進行建議的修改
-
-**方法二：本地修改**
-```bash
-# 切換到PR分支
-git checkout pr/{PR_NUMBER}
-
-# 編輯檔案
-code {file_path}
-
-# 提交修改
-git add {file_path}
-git commit -m "fix: {title}"
-git push
-```
-
-</div>
 
 <sub>🤖 <em>由 AI 程式碼審查助手自動生成</em> | {category_icon} <em>{category}</em> | 📅 <em>{datetime.now().strftime("%Y-%m-%d %H:%M")}</em></sub>"""
     
@@ -366,14 +341,6 @@ def create_summary_comment(analysis_results):
     body += f"""
 
 ---
-
-### ⚡ 快速修復指南
-
-{f'⚠️ **請優先處理 {critical_count} 個 Critical 問題！**' if critical_count > 0 else ''}
-
-1. **使用 GitHub Web IDE**: 按 <kbd>.</kbd> 鍵在瀏覽器中直接編輯
-2. **本地開發**: `git checkout pr/{PR_NUMBER}` 切換到此分支
-3. **自動修復**: 部分問題可使用 IDE 的自動修復功能
 
 <sub>🤖 <em>完整的程式碼審查助手</em> | 📅 <em>{datetime.now().strftime("%Y-%m-%d %H:%M")}</em></sub>"""
     
