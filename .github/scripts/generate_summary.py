@@ -253,7 +253,7 @@ def create_github_style_comment(analysis_data):
 {code_to_show}
 ```"""
 
-    # 添加底部標籤（移除了"如何修改"部分）
+    # 添加底部標籤（已移除"如何修改"部分）
     body += f"""
 
 ---
@@ -396,10 +396,111 @@ def post_review_comment(file_path, line_number, body):
         print(f"⚠️  無法發佈行級別留言: {e}")
         return False
 
+class PRIntegration:
+    """
+    PR Integration 自動化程式碼審查系統
+    提供完整的 Pull Request 整合和自動化審查功能
+    """
+    
+    def __init__(self, config=None):
+        self.config = config or {
+            'auto_review': True,
+            'enable_notifications': True,
+            'review_threshold': 'warning',
+            'max_retries': 3,
+            'timeout': 30000
+        }
+        self.is_initialized = False
+        self.review_results = []
+    
+    def init(self):
+        """初始化 PR Integration 系統"""
+        try:
+            print('🚀 正在初始化 PR Integration 系統...')
+            
+            # 驗證環境配置
+            self.validate_environment()
+            
+            # 建立必要的連接
+            self.setup_connections()
+            
+            # 註冊事件監聽器
+            self.register_event_listeners()
+            
+            self.is_initialized = True
+            print('✅ PR Integration 系統初始化完成')
+            
+            return True
+            
+        except Exception as e:
+            print(f'❌ PR Integration 初始化失敗: {e}')
+            raise e
+    
+    def validate_environment(self):
+        """驗證必要的環境變數和配置"""
+        required_env_vars = [
+            'GITHUB_TOKEN',
+            'GITHUB_REPOSITORY', 
+            'GEMINI_API_KEY'
+        ]
+
+        for env_var in required_env_vars:
+            if not os.environ.get(env_var):
+                raise ValueError(f'缺少必要的環境變數: {env_var}')
+    
+    def setup_connections(self):
+        """建立與外部服務的連接"""
+        # GitHub API 連接測試
+        self.test_github_connection()
+        
+        # Gemini AI 連接測試
+        self.test_gemini_connection()
+    
+    def register_event_listeners(self):
+        """註冊 PR 相關事件監聽器"""
+        print('📡 註冊事件監聽器...')
+        # 這裡可以擴展更多事件處理邏輯
+    
+    def test_github_connection(self):
+        """測試 GitHub 連接"""
+        print('🔗 測試 GitHub API 連接...')
+        try:
+            url = f"{GITHUB_API_URL}/repos/{REPO}"
+            response = requests.get(url, headers=GITHUB_HEADERS)
+            response.raise_for_status()
+            print('✅ GitHub API 連接成功')
+        except Exception as e:
+            print(f'❌ GitHub API 連接失敗: {e}')
+            raise e
+    
+    def test_gemini_connection(self):
+        """測試 Gemini AI 連接"""
+        print('🧠 測試 Gemini AI 連接...')
+        try:
+            model = genai.GenerativeModel(GEMINI_MODEL)
+            response = model.generate_content("Test connection")
+            print('✅ Gemini AI 連接成功')
+        except Exception as e:
+            print(f'❌ Gemini AI 連接失敗: {e}')
+            raise e
+    
+    def get_status(self):
+        """獲取系統狀態"""
+        return {
+            'initialized': self.is_initialized,
+            'config': self.config,
+            'review_count': len(self.review_results),
+            'last_review': self.review_results[-1]['timestamp'] if self.review_results else None
+        }
+
 if __name__ == "__main__":
     try:
         print("🚀 開始進行 GitHub 風格的程式碼審查...")
         print("=" * 50)
+        
+        # 初始化 PR Integration 系統
+        integration = PRIntegration()
+        integration.init()
         
         # 獲取diff和分析
         diff = get_pr_diff()
@@ -439,6 +540,11 @@ if __name__ == "__main__":
             
             print("\n" + "=" * 50)
             print(f"✅ GitHub風格程式碼審查完成！成功發佈 {success_count}/{len(analysis_results)} 個問題")
+            
+            # 檢查系統狀態
+            status = integration.get_status()
+            print(f"📊 系統狀態: {status}")
+            
         else:
             print("ℹ️  沒有發現需要審查的問題")
         
