@@ -3,6 +3,7 @@ import requests
 import json
 import google.generativeai as genai
 from datetime import datetime
+import base64
 
 # --- 環境變數讀取 ---
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
@@ -30,19 +31,200 @@ def get_pr_files():
     return response.json()
 
 
-def get_pr_diff():
-    """取得 Pull Request 的完整 diff 內容"""
-    try:
-        pr_url = f"{GITHUB_API_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
-        pr_response = requests.get(pr_url, headers=GITHUB_HEADERS)
-        pr_response.raise_for_status()
-        pr_data = pr_response.json()
+def get_pr_basic_info():
+    """獲取 PR 基本資訊"""
+    pr_url = f"{GITHUB_API_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
+    pr_response = requests.get(pr_url, headers=GITHUB_HEADERS)
+    pr_response.raise_for_status()
+    return pr_response.json()
 
+
+def get_enhanced_pr_diff():
+    """取得 Pull Request 的完整 diff 內容 - 增強版，顯示更大範圍"""
+    try:
+        pr_data = get_pr_basic_info()
         print(f"PR 標題: {pr_data.get('title', 'N/A')}")
 
+        # 方法1: 嘗試獲取完整的 unified diff 格式
+        print("🔍 嘗試獲取完整 unified diff...")
+        diff_headers = GITHUB_HEADERS.copy()
+        diff_headers['Accept'] = 'application/vnd.github.v3.diff'
+        
+        diff_url = f"{GITHUB_API_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
+        diff_response = requests.get(diff_url, headers=diff_headers)
+        
+        if diff_response.status_code == 200 and diff_response.text.strip():
+            full_unified_diff = diff_response.text
+            print(f"✅ 成功獲取完整 unified diff，長度: {len(full_unified_diff)}")
+            
+            # 增加截斷限制到 100K
+            if len(full_unified_diff) > 100000:
+                print(f"⚠️  Diff 內容過長，進行截斷...")
+                return full_unified_diff[:100000] + "\n\n⚠️ 內容已截斷（unified diff 格式）"
+            
+            # 添加 PR 基本資訊到 diff 開頭
+            enhanced_diff = f"""Pull Request: {pr_data.get('title', '')}
+URL: {pr_data.get('html_url', '')}
+Author: {pr_data.get('user', {}).get('login', 'N/A')}
+Base: {pr_data.get('base', {}).get('ref', 'N/A')} -> Head: {pr_data.get('head', {}).get('ref', 'N/A')}
+Files changed: {pr_data.get('changed_files', 0)}
+Additions: +{pr_data.get('additions', 0)} | Deletions: -{pr_data.get('deletions', 0)}
+
+{'=' * 80}
+UNIFIED DIFF CONTENT:
+{'=' * 80}
+
+{full_unified_diff}"""
+            
+            return enhanced_diff
+
+        # 方法2: 如果 unified diff 失敗，使用增強版的逐文件處理
+        print("⚠️  Unified diff 獲取失敗，使用增強版逐文件處理...")
+        return get_enhanced_file_by_file_diff(pr_data)
+
+    except Exception as e:
+        print(f"❌ 獲取增強 PR diff 時發生錯誤: {e}")
+        # 降級到原始方法
+        return get_pr_diff_fallback()
+
+
+def get_enhanced_file_by_file_diff(pr_data):
+    """增強版的逐文件 diff 處理，包含更多上下文"""
+    try:
         files = get_pr_files()
         print(f"實際獲取到 {len(files)} 個變更文件")
 
+        if not files:
+            return "No files changed in this PR."
+
+        full_diff = f"""Pull Request: {pr_data.get('title', '')}
+URL: {pr_data.get('html_url', '')}
+Author: {pr_data.get('user', {}).get('login', 'N/A')}
+Base: {pr_data.get('base', {}).get('ref', 'N/A')} -> Head: {pr_data.get('head', {}).get('ref', 'N/A')}
+Files changed: {len(files)}
+Total additions: +{pr_data.get('additions', 0)} | Total deletions: -{pr_data.get('deletions', 0)}
+
+{'=' * 80}
+ENHANCED FILE-BY-FILE DIFF:
+{'=' * 80}
+
+"""
+
+        for file_data in files:
+            filename = file_data['filename']
+            status = file_data['status']
+            additions = file_data.get('additions', 0)
+            deletions = file_data.get('deletions', 0)
+
+            print(f"處理文件: {filename} (狀態: {status}, +{additions}/-{deletions})")
+
+            file_diff = f"\n{'=' * 60}\n"
+            file_diff += f"📁 File: {filename}\n"
+            file_diff += f"📊 Status: {status}\n"
+            file_diff += f"📈 Changes: +{additions}/-{deletions}\n"
+            
+            if 'previous_filename' in file_data:
+                file_diff += f"📝 Renamed from: {file_data['previous_filename']}\n"
+            
+            file_diff += f"{'=' * 60}\n"
+
+            # 添加標準 patch
+            if 'patch' in file_data and file_data['patch']:
+                file_diff += "\n--- STANDARD PATCH ---\n"
+                file_diff += file_data['patch']
+                file_diff += "\n"
+
+            # 對於小的變更，嘗試獲取更多上下文
+            if additions + deletions <= 20 and status in ['modified', 'added']:
+                print(f"  └─ 嘗試獲取 {filename} 的完整內容上下文...")
+                file_context = get_file_full_context(filename, pr_data)
+                if file_context:
+                    file_diff += f"\n--- FULL FILE CONTEXT ---\n"
+                    file_diff += f"Base SHA: {pr_data['base']['sha'][:8]}\n"
+                    file_diff += f"Head SHA: {pr_data['head']['sha'][:8]}\n\n"
+                    
+                    if file_context.get('base_content'):
+                        file_diff += f"--- BEFORE (Base) ---\n"
+                        file_diff += file_context['base_content'][:5000]  # 限制每個文件 5K
+                        if len(file_context['base_content']) > 5000:
+                            file_diff += "\n... (truncated) ..."
+                        file_diff += "\n\n"
+                    
+                    if file_context.get('head_content'):
+                        file_diff += f"--- AFTER (Head) ---\n"
+                        file_diff += file_context['head_content'][:5000]  # 限制每個文件 5K
+                        if len(file_context['head_content']) > 5000:
+                            file_diff += "\n... (truncated) ..."
+                        file_diff += "\n"
+            
+            # 如果沒有 patch 數據
+            if not file_data.get('patch'):
+                file_diff += f"\n⚠️  No patch data available for {filename}"
+                if status == 'added':
+                    file_diff += " (新增的文件)"
+                elif status == 'removed':
+                    file_diff += " (刪除的文件)"
+                elif status == 'renamed':
+                    file_diff += " (重命名的文件)"
+
+            full_diff += file_diff + "\n"
+
+        # 增加總長度限制到 150K
+        if len(full_diff) > 150000:
+            print(f"⚠️  Enhanced diff 內容過長，進行截斷...")
+            return full_diff[:150000] + "\n\n⚠️ 內容已截斷（增強版格式）"
+
+        return full_diff
+
+    except Exception as e:
+        print(f"❌ 獲取增強文件 diff 時發生錯誤: {e}")
+        return get_pr_diff_fallback()
+
+
+def get_file_full_context(filename, pr_data):
+    """獲取文件在 PR 前後的完整內容"""
+    try:
+        base_content = None
+        head_content = None
+        
+        # 獲取 base 版本的文件內容
+        try:
+            base_url = f"{GITHUB_API_URL}/repos/{REPO}/contents/{filename}"
+            base_params = {'ref': pr_data['base']['sha']}
+            base_response = requests.get(base_url, headers=GITHUB_HEADERS, params=base_params)
+            
+            if base_response.status_code == 200:
+                base_content = base64.b64decode(base_response.json()['content']).decode('utf-8')
+        except Exception:
+            pass  # 可能是新增的文件
+        
+        # 獲取 head 版本的文件內容
+        try:
+            head_url = f"{GITHUB_API_URL}/repos/{REPO}/contents/{filename}"
+            head_params = {'ref': pr_data['head']['sha']}
+            head_response = requests.get(head_url, headers=GITHUB_HEADERS, params=head_params)
+            
+            if head_response.status_code == 200:
+                head_content = base64.b64decode(head_response.json()['content']).decode('utf-8')
+        except Exception:
+            pass  # 可能是刪除的文件
+        
+        return {
+            'base_content': base_content,
+            'head_content': head_content
+        }
+        
+    except Exception as e:
+        print(f"    ❌ 無法獲取 {filename} 的完整內容: {e}")
+        return None
+
+
+def get_pr_diff_fallback():
+    """原始版本的 diff 獲取作為後備方案"""
+    try:
+        pr_data = get_pr_basic_info()
+        files = get_pr_files()
+        
         if not files:
             return "No files changed in this PR."
 
@@ -54,8 +236,6 @@ def get_pr_diff():
             status = file_data['status']
             additions = file_data.get('additions', 0)
             deletions = file_data.get('deletions', 0)
-
-            print(f"處理文件: {filename} (狀態: {status}, +{additions}/-{deletions})")
 
             file_diff = f"\n{'=' * 50}\n"
             file_diff += f"File: {filename}\n"
@@ -70,14 +250,15 @@ def get_pr_diff():
 
             full_diff += file_diff + "\n"
 
+        # 原始的截斷限制
         if len(full_diff) > 25000:
-            print(f"⚠️  Diff 內容過長，進行截斷...")
-            return full_diff[:25000] + "\n\n⚠️ 內容已截斷"
+            print(f"⚠️  Fallback diff 內容過長，進行截斷...")
+            return full_diff[:25000] + "\n\n⚠️ 內容已截斷（fallback 模式）"
 
         return full_diff
 
     except Exception as e:
-        print(f"獲取 PR diff 時發生錯誤: {e}")
+        print(f"❌ Fallback diff 獲取失敗: {e}")
         return f"Error fetching PR diff: {str(e)}"
 
 
@@ -96,6 +277,7 @@ def analyze_diff_with_gemini(diff_text):
     2. 專注於可操作的具體建議
     3. 提供修復後的程式碼範例
     4. 評估安全性、效能、程式碼品質問題
+    5. 現在您有更完整的代碼上下文，請提供更深入的分析
 
     **回應格式：**每個物件包含以下欄位：
     - `file_path`: 檔案路徑
@@ -133,7 +315,7 @@ def analyze_diff_with_gemini(diff_text):
     prompt = prompt_template.replace("__DIFF_PLACEHOLDER__", diff_text)
 
     try:
-        print("正在呼叫 Gemini API...")
+        print("🤖 正在呼叫 Gemini API 進行深度分析...")
         response = model.generate_content(prompt)
 
         if not response.text:
@@ -145,16 +327,18 @@ def analyze_diff_with_gemini(diff_text):
         try:
             analysis_results = json.loads(cleaned_text)
             if isinstance(analysis_results, list):
-                print(f"成功解析 {len(analysis_results)} 個分析要點")
+                print(f"✅ 成功解析 {len(analysis_results)} 個分析要點")
                 return analysis_results
             else:
+                print("⚠️  分析結果不是陣列格式")
                 return []
         except json.JSONDecodeError as e:
-            print(f"JSON 解析失敗: {e}")
+            print(f"❌ JSON 解析失敗: {e}")
+            print(f"原始回應前100字符: {cleaned_text[:100]}")
             return []
 
     except Exception as e:
-        print(f"API 呼叫錯誤: {e}")
+        print(f"❌ Gemini API 呼叫錯誤: {e}")
         return []
 
 
@@ -257,12 +441,12 @@ def create_github_style_comment(analysis_data):
 {code_to_show}
 ```"""
 
-    # 添加底部標籤（移除了"如何修改"部分）
+    # 添加底部標籤
     body += f"""
 
 ---
 
-<sub>🤖 <em>由 AI 程式碼審查助手自動生成</em> | {category_icon} <em>{category}</em> | 📅 <em>{datetime.now().strftime("%Y-%m-%d %H:%M")}</em></sub>"""
+<sub>🤖 <em>由 AI 程式碼審查助手自動生成 (Enhanced Version)</em> | {category_icon} <em>{category}</em> | 📅 <em>{datetime.now().strftime("%Y-%m-%d %H:%M")}</em></sub>"""
 
     return body
 
@@ -284,7 +468,7 @@ def create_summary_comment(analysis_results):
         cat = item.get('category', 'Other')
         categories[cat] = categories.get(cat, 0) + 1
 
-    body = f"""## 🤖 AI 程式碼審查摘要報告
+    body = f"""## 🤖 AI 程式碼審查摘要報告 (Enhanced)
 
 ### 📊 總體統計
 
@@ -347,7 +531,7 @@ def create_summary_comment(analysis_results):
 
 ---
 
-<sub>🤖 <em>完整的程式碼審查助手</em> | 📅 <em>{datetime.now().strftime("%Y-%m-%d %H:%M")}</em></sub>"""
+<sub>🤖 <em>增強版程式碼審查助手 - 提供更深入的代碼分析</em> | 📅 <em>{datetime.now().strftime("%Y-%m-%d %H:%M")}</em></sub>"""
 
     return body
 
@@ -370,15 +554,11 @@ def post_review_comment(file_path, line_number, body):
 
     # 嘗試發佈 review comment（行級別）
     try:
-        # 首先獲取PR的SHA
-        pr_url = f"{GITHUB_API_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
-        pr_response = requests.get(pr_url, headers=GITHUB_HEADERS)
-        pr_data = pr_response.json()
-
+        pr_data = get_pr_basic_info()
         sha = pr_data['head']['sha']
 
         review_payload = {
-            "body": "AI 程式碼審查",
+            "body": "AI 程式碼審查 (Enhanced)",
             "event": "COMMENT",
             "comments": [
                 {
@@ -406,11 +586,16 @@ def post_review_comment(file_path, line_number, body):
 
 if __name__ == "__main__":
     try:
-        print("🚀 開始進行 GitHub 風格的程式碼審查...")
-        print("=" * 50)
+        print("🚀 開始進行增強版 GitHub 程式碼審查...")
+        print("=" * 70)
 
-        # 獲取diff和分析
-        diff = get_pr_diff()
+        # 獲取增強版 diff 和分析
+        print("📥 獲取 PR diff 內容...")
+        diff = get_enhanced_pr_diff()
+        
+        print(f"📄 Diff 內容長度: {len(diff)} 字符")
+        print("🤖 開始 AI 分析...")
+        
         analysis_results = analyze_diff_with_gemini(diff)
 
         if analysis_results:
@@ -419,13 +604,15 @@ if __name__ == "__main__":
             # 先發佈摘要留言
             summary_body = create_summary_comment(analysis_results)
             if summary_body:
-                post_comment(summary_body)
-                print("✅ 摘要報告已發佈")
+                if post_comment(summary_body):
+                    print("✅ 增強版摘要報告已發佈")
+                else:
+                    print("❌ 摘要報告發佈失敗")
 
             # 發佈每個詳細問題
             success_count = 0
             for i, analysis in enumerate(analysis_results, 1):
-                print(f"\n發佈第 {i} 個問題: {analysis.get('title', 'N/A')}")
+                print(f"\n📝 發佈第 {i} 個問題: {analysis.get('title', 'N/A')}")
 
                 comment_body = create_github_style_comment(analysis)
 
@@ -445,13 +632,33 @@ if __name__ == "__main__":
                     if post_comment(comment_body):
                         success_count += 1
 
-            print("\n" + "=" * 50)
-            print(f"✅ GitHub風格程式碼審查完成！成功發佈 {success_count}/{len(analysis_results)} 個問題")
+            print("\n" + "=" * 70)
+            print(f"🎉 增強版 GitHub 程式碼審查完成！")
+            print(f"📊 成功發佈 {success_count}/{len(analysis_results)} 個問題")
+            print(f"🔍 使用了增強版 diff 分析，提供更深入的程式碼審查")
         else:
-            print("ℹ️  沒有發現需要審查的問題")
+            # 即使沒有問題，也發佈一個簡短的報告
+            no_issues_body = f"""## 🤖 AI 程式碼審查報告 (Enhanced)
+
+### ✅ 審查結果
+
+恭喜！本次 Pull Request 沒有發現明顯的程式碼問題。
+
+### 📊 審查範圍
+- 使用了增強版 diff 分析
+- 包含更完整的程式碼上下文
+- 深度檢查安全性、效能和程式碼品質
+
+---
+
+<sub>🤖 <em>增強版程式碼審查助手</em> | 📅 <em>{datetime.now().strftime("%Y-%m-%d %H:%M")}</em></sub>"""
+            
+            if post_comment(no_issues_body):
+                print("✅ 未發現問題，已發佈確認報告")
+            else:
+                print("ℹ️  沒有發現需要審查的問題")
 
     except Exception as e:
         print(f"❌ 發生錯誤: {e}")
         import traceback
-
         traceback.print_exc()
