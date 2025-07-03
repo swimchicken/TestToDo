@@ -262,147 +262,202 @@ def get_pr_diff_fallback():
         return f"Error fetching PR diff: {str(e)}"
 
 
-def analyze_diff_with_gemini(diff_text):
-    """使用 Gemini API 分析 diff - 增強版，包含行號和建議修復"""
+def generate_json_with_gemini(diff_text):
+    """階段1: 專門產生乾淨的 JSON 格式"""
     if not diff_text.strip():
-        return []
+        return ""
 
     model = genai.GenerativeModel(GEMINI_MODEL)
 
-    prompt_template = """
-    您是一位專業的 GitHub 程式碼審查專家。請分析下方的 Pull Request diff 內容，提供具體的程式碼審查建議。
+    # 階段1: 專注於產生格式正確的 JSON
+    stage1_prompt = """
+你是一個 JSON 產生器。請分析程式碼 diff 並產生有效的 JSON 陣列。
 
-    **重要要求：**
-    1. 必須回傳有效的 JSON 陣列格式，不要包含任何其他文字
-    2. JSON 中不要使用反斜線(\)，改用正斜線(/)
-    3. 所有字串中的特殊字符都要正確轉義
-    4. 專注於可操作的具體建議
-    5. 提供修復後的程式碼範例
-    6. 評估安全性、效能、程式碼品質問題
-    7. 現在您有更完整的代碼上下文，請提供更深入的分析
+重要規則：
+1. 只回傳純 JSON 陣列，不要任何解釋文字
+2. 不要使用 ```json 或任何包裝
+3. 特殊字符必須正確轉義
+4. 每個物件必須包含所有必要欄位
 
-    **JSON 格式要求：**
-    - 使用雙引號包圍所有字串
-    - 特殊字符請正確轉義：換行用 \\n，制表符用 \\t，雙引號用 \\"
-    - 不要在字串中包含未轉義的反斜線
-    - 確保所有 JSON 物件結構完整
+JSON 結構：
+[
+  {
+    "file_path": "字串",
+    "line_number": 數字或null,
+    "severity": "Critical/Warning/Info",
+    "category": "字串",
+    "title": "字串",
+    "description": "字串",
+    "suggestion": "字串",
+    "fixed_code": "字串",
+    "original_code": "字串"
+  }
+]
 
-    **回應格式：**每個物件包含以下欄位：
-    - `file_path`: 檔案路徑（字串）
-    - `line_number`: 問題所在行號（數字，如果不確定請使用 null）
-    - `severity`: 嚴重程度（"Critical", "Warning", "Info" 其中之一）
-    - `category`: 問題類別（"Security", "Performance", "Code Quality", "Bug Risk"等）
-    - `title`: 問題標題（簡短描述）
-    - `description`: 詳細問題說明
-    - `suggestion`: 具體改進建議
-    - `fixed_code`: 修復後的程式碼範例（如果適用，否則為空字串）
-    - `original_code`: 原始有問題的程式碼（如果適用，否則為空字串）
+範例（必須遵循此格式）：
+[{"file_path":"test.js","line_number":10,"severity":"Warning","category":"Code Quality","title":"問題標題","description":"問題描述","suggestion":"建議修改","fixed_code":"修復程式碼","original_code":"原始程式碼"}]
 
-    **只回傳 JSON 陣列，不要任何其他文字。範例：**
-    [{"file_path":"src/test.js","line_number":5,"severity":"Warning","category":"Code Quality","title":"變數命名建議","description":"變數名稱不夠明確","suggestion":"使用更描述性的變數名稱","fixed_code":"const userApiKey = process.env.API_KEY;","original_code":"const key = process.env.API_KEY;"}]
+分析以下 diff 並產生 JSON：
 
-    請分析以下 diff：
+__DIFF_PLACEHOLDER__
+"""
 
-    __DIFF_PLACEHOLDER__
-    """
-
-    prompt = prompt_template.replace("__DIFF_PLACEHOLDER__", diff_text)
+    prompt = stage1_prompt.replace("__DIFF_PLACEHOLDER__", diff_text)
 
     try:
-        print("🤖 正在呼叫 Gemini API 進行深度分析...")
+        print("🎯 階段1: 產生 JSON 格式...")
         response = model.generate_content(prompt)
 
         if not response.text:
-            return []
+            return ""
 
-        cleaned_text = response.text.strip()
-        cleaned_text = cleaned_text.replace('```json', '').replace('```', '').strip()
+        # 清理回應
+        cleaned_json = response.text.strip()
+        cleaned_json = cleaned_json.replace('```json', '').replace('```', '').strip()
+        
+        # 移除可能的前後文字，只保留 JSON
+        if cleaned_json.find('[') != -1 and cleaned_json.find(']') != -1:
+            start_idx = cleaned_json.find('[')
+            end_idx = cleaned_json.rfind(']') + 1
+            cleaned_json = cleaned_json[start_idx:end_idx]
 
-        try:
-            analysis_results = json.loads(cleaned_text)
-            if isinstance(analysis_results, list):
-                print(f"✅ 成功解析 {len(analysis_results)} 個分析要點")
-                return analysis_results
-            else:
-                print("⚠️  分析結果不是陣列格式")
-                return []
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON 解析失敗: {e}")
-            print(f"原始回應前200字符: {cleaned_text[:200]}")
-            
-            # 嘗試修復常見的 JSON 問題
-            try:
-                print("🔧 嘗試修復 JSON 格式...")
-                
-                # 移除可能的問題字符
-                fixed_text = cleaned_text
-                
-                # 修復常見的轉義問題
-                fixed_text = fixed_text.replace('\\', '\\\\')  # 修復反斜線
-                fixed_text = fixed_text.replace('\n', '\\n')   # 修復換行符
-                fixed_text = fixed_text.replace('\r', '\\r')   # 修復回車符
-                fixed_text = fixed_text.replace('\t', '\\t')   # 修復制表符
-                fixed_text = fixed_text.replace('\"', '\\"')   # 修復雙引號
-                
-                # 如果修復後還是有問題，嘗試逐步清理
-                if not fixed_text.strip().startswith('['):
-                    # 找到第一個 [
-                    start_idx = fixed_text.find('[')
-                    if start_idx != -1:
-                        fixed_text = fixed_text[start_idx:]
-                
-                if not fixed_text.strip().endswith(']'):
-                    # 找到最後一個 ]
-                    end_idx = fixed_text.rfind(']')
-                    if end_idx != -1:
-                        fixed_text = fixed_text[:end_idx+1]
-                
-                # 嘗試解析修復後的 JSON
-                analysis_results = json.loads(fixed_text)
-                if isinstance(analysis_results, list):
-                    print(f"✅ 修復成功！解析 {len(analysis_results)} 個分析要點")
-                    return analysis_results
-                else:
-                    print("⚠️  修復後仍不是陣列格式")
-                    return []
-                    
-            except Exception as fix_error:
-                print(f"❌ JSON 修復也失敗: {fix_error}")
-                
-                # 最後嘗試：使用正則表達式提取可能的有效部分
-                try:
-                    import re
-                    print("🔧 嘗試使用正則表達式提取有效 JSON...")
-                    
-                    # 尋找看起來像 JSON 物件的部分
-                    json_pattern = r'\{[^{}]*"file_path"[^{}]*\}'
-                    matches = re.findall(json_pattern, cleaned_text, re.DOTALL)
-                    
-                    if matches:
-                        print(f"找到 {len(matches)} 個可能的 JSON 物件")
-                        valid_objects = []
-                        
-                        for match in matches:
-                            try:
-                                obj = json.loads(match)
-                                valid_objects.append(obj)
-                            except:
-                                continue
-                        
-                        if valid_objects:
-                            print(f"✅ 正則提取成功！獲得 {len(valid_objects)} 個有效物件")
-                            return valid_objects
-                    
-                    print("❌ 所有修復嘗試都失敗了")
-                    return []
-                    
-                except Exception as regex_error:
-                    print(f"❌ 正則提取也失敗: {regex_error}")
-                    return []
+        print(f"✅ JSON 產生成功，長度: {len(cleaned_json)} 字符")
+        return cleaned_json
 
     except Exception as e:
-        print(f"❌ Gemini API 呼叫錯誤: {e}")
+        print(f"❌ 階段1 錯誤: {e}")
+        return ""
+
+
+def validate_and_enhance_json(json_text):
+    """階段2: 驗證和優化 JSON 內容"""
+    if not json_text.strip():
         return []
+
+    print("🔍 階段2: 驗證和優化 JSON...")
+
+    # 嘗試解析 JSON
+    try:
+        data = json.loads(json_text)
+        if not isinstance(data, list):
+            print("❌ JSON 不是陣列格式")
+            return []
+        
+        print(f"✅ JSON 解析成功，包含 {len(data)} 個項目")
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON 格式錯誤: {e}")
+        
+        # 嘗試修復 JSON
+        try:
+            print("🔧 嘗試修復 JSON...")
+            import re
+            
+            # 使用正則表達式提取 JSON 物件
+            json_pattern = r'\{[^{}]*?"file_path"[^{}]*?\}'
+            matches = re.findall(json_pattern, json_text, re.DOTALL)
+            
+            if matches:
+                print(f"找到 {len(matches)} 個 JSON 物件")
+                valid_objects = []
+                
+                for i, match in enumerate(matches):
+                    try:
+                        # 清理和修復單個物件
+                        cleaned_match = match.strip()
+                        obj = json.loads(cleaned_match)
+                        valid_objects.append(obj)
+                        print(f"  ✅ 物件 {i+1} 解析成功")
+                    except Exception as obj_error:
+                        print(f"  ❌ 物件 {i+1} 解析失敗: {obj_error}")
+                        continue
+                
+                if valid_objects:
+                    data = valid_objects
+                    print(f"✅ 修復成功！獲得 {len(data)} 個有效物件")
+                else:
+                    print("❌ 沒有有效的 JSON 物件")
+                    return []
+            else:
+                print("❌ 找不到有效的 JSON 物件")
+                return []
+                
+        except Exception as fix_error:
+            print(f"❌ JSON 修復失敗: {fix_error}")
+            return []
+
+    # 驗證和優化每個項目的內容
+    validated_items = []
+    required_fields = ['file_path', 'severity', 'category', 'title', 'description', 'suggestion']
+    
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            print(f"⚠️  項目 {i+1} 不是物件格式，跳過")
+            continue
+        
+        # 檢查必要欄位
+        missing_fields = [field for field in required_fields if field not in item]
+        if missing_fields:
+            print(f"⚠️  項目 {i+1} 缺少欄位: {missing_fields}，嘗試補充...")
+            
+            # 補充缺少的欄位
+            for field in missing_fields:
+                if field == 'severity':
+                    item[field] = 'Info'
+                elif field == 'category':
+                    item[field] = 'Code Quality'
+                else:
+                    item[field] = f'未提供{field}'
+        
+        # 驗證嚴重程度
+        if item.get('severity') not in ['Critical', 'Warning', 'Info']:
+            print(f"⚠️  項目 {i+1} 嚴重程度無效，設為 Info")
+            item['severity'] = 'Info'
+        
+        # 確保數字欄位正確
+        if 'line_number' in item and item['line_number'] is not None:
+            try:
+                item['line_number'] = int(item['line_number'])
+            except (ValueError, TypeError):
+                item['line_number'] = None
+        
+        # 確保字串欄位不為空
+        for field in ['title', 'description', 'suggestion']:
+            if not item.get(field) or not isinstance(item[field], str):
+                item[field] = f'未提供{field}'
+        
+        # 確保程式碼欄位存在
+        if 'fixed_code' not in item:
+            item['fixed_code'] = ''
+        if 'original_code' not in item:
+            item['original_code'] = ''
+        
+        validated_items.append(item)
+        print(f"  ✅ 項目 {i+1}: {item.get('title', 'N/A')} ({item.get('severity', 'N/A')})")
+
+    print(f"🎉 階段2 完成！驗證了 {len(validated_items)} 個有效項目")
+    return validated_items
+
+
+def analyze_diff_with_gemini(diff_text):
+    """使用 2 階段方法分析 diff"""
+    print("🚀 啟動 2 階段 AI 分析...")
+    
+    # 階段1: 產生 JSON
+    json_text = generate_json_with_gemini(diff_text)
+    if not json_text:
+        print("❌ 階段1 失敗，無法產生 JSON")
+        return []
+    
+    # 階段2: 驗證和優化
+    validated_results = validate_and_enhance_json(json_text)
+    
+    if validated_results:
+        print(f"✅ 2 階段分析完成！最終獲得 {len(validated_results)} 個分析要點")
+    else:
+        print("❌ 2 階段分析失敗，無有效結果")
+    
+    return validated_results
 
 
 def create_github_style_comment(analysis_data):
