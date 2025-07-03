@@ -273,43 +273,37 @@ def analyze_diff_with_gemini(diff_text):
     您是一位專業的 GitHub 程式碼審查專家。請分析下方的 Pull Request diff 內容，提供具體的程式碼審查建議。
 
     **重要要求：**
-    1. 必須回傳有效的 JSON 陣列格式
-    2. 專注於可操作的具體建議
-    3. 提供修復後的程式碼範例
-    4. 評估安全性、效能、程式碼品質問題
-    5. 現在您有更完整的代碼上下文，請提供更深入的分析
+    1. 必須回傳有效的 JSON 陣列格式，不要包含任何其他文字
+    2. JSON 中不要使用反斜線(\)，改用正斜線(/)
+    3. 所有字串中的特殊字符都要正確轉義
+    4. 專注於可操作的具體建議
+    5. 提供修復後的程式碼範例
+    6. 評估安全性、效能、程式碼品質問題
+    7. 現在您有更完整的代碼上下文，請提供更深入的分析
+
+    **JSON 格式要求：**
+    - 使用雙引號包圍所有字串
+    - 特殊字符請正確轉義：換行用 \\n，制表符用 \\t，雙引號用 \\"
+    - 不要在字串中包含未轉義的反斜線
+    - 確保所有 JSON 物件結構完整
 
     **回應格式：**每個物件包含以下欄位：
-    - `file_path`: 檔案路徑
-    - `line_number`: 問題所在行號（如果可識別）
-    - `severity`: 嚴重程度（"Critical", "Warning", "Info"）
+    - `file_path`: 檔案路徑（字串）
+    - `line_number`: 問題所在行號（數字，如果不確定請使用 null）
+    - `severity`: 嚴重程度（"Critical", "Warning", "Info" 其中之一）
     - `category`: 問題類別（"Security", "Performance", "Code Quality", "Bug Risk"等）
     - `title`: 問題標題（簡短描述）
     - `description`: 詳細問題說明
     - `suggestion`: 具體改進建議
-    - `fixed_code`: 修復後的程式碼範例（如果適用）
-    - `original_code`: 原始有問題的程式碼
+    - `fixed_code`: 修復後的程式碼範例（如果適用，否則為空字串）
+    - `original_code`: 原始有問題的程式碼（如果適用，否則為空字串）
 
-    範例輸出：
-    [
-        {
-            "file_path": "src/services/apiService.js",
-            "line_number": 5,
-            "severity": "Critical",
-            "category": "Security",
-            "title": "API密鑰硬編碼風險",
-            "description": "直接在程式碼中硬編碼API密鑰會造成安全風險，任何能訪問程式碼的人都能看到密鑰。",
-            "suggestion": "將API密鑰移至環境變數中，使用process.env.API_KEY讀取。",
-            "fixed_code": "const apiKey = process.env.REACT_APP_API_KEY;",
-            "original_code": "const apiKey = 'sk-1234567890abcdef';"
-        }
-    ]
+    **只回傳 JSON 陣列，不要任何其他文字。範例：**
+    [{"file_path":"src/test.js","line_number":5,"severity":"Warning","category":"Code Quality","title":"變數命名建議","description":"變數名稱不夠明確","suggestion":"使用更描述性的變數名稱","fixed_code":"const userApiKey = process.env.API_KEY;","original_code":"const key = process.env.API_KEY;"}]
 
-    請用繁體中文分析以下 diff：
+    請分析以下 diff：
 
-    ```diff
     __DIFF_PLACEHOLDER__
-    ```
     """
 
     prompt = prompt_template.replace("__DIFF_PLACEHOLDER__", diff_text)
@@ -334,8 +328,77 @@ def analyze_diff_with_gemini(diff_text):
                 return []
         except json.JSONDecodeError as e:
             print(f"❌ JSON 解析失敗: {e}")
-            print(f"原始回應前100字符: {cleaned_text[:100]}")
-            return []
+            print(f"原始回應前200字符: {cleaned_text[:200]}")
+            
+            # 嘗試修復常見的 JSON 問題
+            try:
+                print("🔧 嘗試修復 JSON 格式...")
+                
+                # 移除可能的問題字符
+                fixed_text = cleaned_text
+                
+                # 修復常見的轉義問題
+                fixed_text = fixed_text.replace('\\', '\\\\')  # 修復反斜線
+                fixed_text = fixed_text.replace('\n', '\\n')   # 修復換行符
+                fixed_text = fixed_text.replace('\r', '\\r')   # 修復回車符
+                fixed_text = fixed_text.replace('\t', '\\t')   # 修復制表符
+                fixed_text = fixed_text.replace('\"', '\\"')   # 修復雙引號
+                
+                # 如果修復後還是有問題，嘗試逐步清理
+                if not fixed_text.strip().startswith('['):
+                    # 找到第一個 [
+                    start_idx = fixed_text.find('[')
+                    if start_idx != -1:
+                        fixed_text = fixed_text[start_idx:]
+                
+                if not fixed_text.strip().endswith(']'):
+                    # 找到最後一個 ]
+                    end_idx = fixed_text.rfind(']')
+                    if end_idx != -1:
+                        fixed_text = fixed_text[:end_idx+1]
+                
+                # 嘗試解析修復後的 JSON
+                analysis_results = json.loads(fixed_text)
+                if isinstance(analysis_results, list):
+                    print(f"✅ 修復成功！解析 {len(analysis_results)} 個分析要點")
+                    return analysis_results
+                else:
+                    print("⚠️  修復後仍不是陣列格式")
+                    return []
+                    
+            except Exception as fix_error:
+                print(f"❌ JSON 修復也失敗: {fix_error}")
+                
+                # 最後嘗試：使用正則表達式提取可能的有效部分
+                try:
+                    import re
+                    print("🔧 嘗試使用正則表達式提取有效 JSON...")
+                    
+                    # 尋找看起來像 JSON 物件的部分
+                    json_pattern = r'\{[^{}]*"file_path"[^{}]*\}'
+                    matches = re.findall(json_pattern, cleaned_text, re.DOTALL)
+                    
+                    if matches:
+                        print(f"找到 {len(matches)} 個可能的 JSON 物件")
+                        valid_objects = []
+                        
+                        for match in matches:
+                            try:
+                                obj = json.loads(match)
+                                valid_objects.append(obj)
+                            except:
+                                continue
+                        
+                        if valid_objects:
+                            print(f"✅ 正則提取成功！獲得 {len(valid_objects)} 個有效物件")
+                            return valid_objects
+                    
+                    print("❌ 所有修復嘗試都失敗了")
+                    return []
+                    
+                except Exception as regex_error:
+                    print(f"❌ 正則提取也失敗: {regex_error}")
+                    return []
 
     except Exception as e:
         print(f"❌ Gemini API 呼叫錯誤: {e}")
